@@ -6,5 +6,5 @@ __MACOSX/
 data/
 train_data/
 *.ipynb
-requrements_old.txt
+requirements_old.txt
 *.csv
