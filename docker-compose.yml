@@ -1,0 +1,79 @@
+services:
+  redis:
+    container_name: redis
+    image: redis/redis-stack-server:latest
+    ports:
+      - "6379:6379"
+  rabbitmq:
+    container_name: rabbitmq
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "5673:5673"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  event_collector:
+    build: 
+      context: .
+      dockerfile: event_collector/Dockerfile
+    container_name: event_collector_dc
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+      - rabbitmq
+    command: uvicorn main:app --port 5000 --host 0.0.0.0
+    healthcheck:
+      test: curl -X 'GET' 'localhost:5000/healthcheck'
+      interval: 2m30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+  recommendations:
+    build: 
+      context: .
+      dockerfile: recommendations/Dockerfile
+    container_name: recommendations_dc
+    ports:
+      - "5001:5001"
+    depends_on:
+      - redis
+    command: uvicorn main:app --port 5001 --host 0.0.0.0
+    healthcheck:
+      test: curl -X 'GET' 'localhost:5001/healthcheck'
+      interval: 2m30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+  webapp:
+    build: 
+      context: .
+      dockerfile: webapp/Dockerfile
+    depends_on:
+      event_collector:
+        condition: service_healthy
+      recommendations:
+        condition: service_healthy
+    container_name: webapp_dc
+    ports:
+      - "8000:8000"
+    command: python app.py
+  regular_pipeline:
+    build: 
+      context: .
+      dockerfile: regular_pipeline/Dockerfile
+    container_name: regular_pipeline_dc
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      webapp:
+        condition: service_started
+    volumes:
+      - ./regular_pipeline:/regular_pipeline
+      - ./data:/data
+    command: python main.py

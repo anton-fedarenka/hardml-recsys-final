@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic
+redis
+pytest
+
+aiohttp
+requests
+pyarrow
+polars
+flask
+httpx
+numpy
+aio-pika

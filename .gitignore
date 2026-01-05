@@ -1,0 +1,10 @@
+.vscode/
+__MACOSX/
+*__pycache__/
+*.ipynb_checkpoints/
+*/static
+data/
+train_data/
+*.ipynb
+requrements_old.txt
+*.csv
