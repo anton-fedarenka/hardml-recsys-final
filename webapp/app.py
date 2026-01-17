@@ -27,6 +27,7 @@ links_data = (
 movies_data = (
     pl.read_csv('static/movies.csv')
     .with_columns(pl.col('movieId').cast(pl.Utf8))
+    .with_columns(pl.col('genres').map_elements(lambda x: x.split('|')))
 )
 
 
@@ -99,7 +100,8 @@ def fetch_items_data_for_item_ids(item_ids):
 if __name__ == '__main__':
     data = {
         "item_ids": list(map(str, movie_id_title.keys())),
+        "genres": movies_data['genres'].to_list()
     }
     requests.post(f'{recommendation_service_url}/add_items', json=data)
     # app.run(debug=True, host='0.0.0.0', port=8000)
-    app.run(debug=True, port=8000)
+    app.run(debug=False, port=8000)

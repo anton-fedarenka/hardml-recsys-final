@@ -17,3 +17,4 @@ class InteractEvent(BaseModel):
 
 class NewItemsEvent(BaseModel):
     item_ids: List[str] = Field(description="identifiers of new items")
+    genres: Optional[List[List[str]]] = Field(description='List of movie genres')

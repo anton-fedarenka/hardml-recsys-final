@@ -56,9 +56,19 @@
             });
         });
 
+        function randomChoice(p) {
+            // Choice random value from the list for user_id variation. 
+            // Analogy of np.random.choice()
+            let rnd = p.reduce( (a, b) => a + b ) * Math.random();
+            return p.findIndex( a => (rnd -= a) < 0 );
+}
         function getUserID() {
+            // m = randomChoice([1,2,3,4]); 
             // Implement a function to retrieve the user's ID from cookies
-            return 'user_id';  // Replace with actual code to fetch user ID from cookies
+            const urlParams = new URLSearchParams(window.location.search);
+            const user_id = urlParams.get('user_id') || 'user_id';
+
+            return user_id;  // Replace with actual code to fetch user ID from cookies
         }
     });
 </script>

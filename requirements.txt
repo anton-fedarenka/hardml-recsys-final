@@ -3,6 +3,8 @@ uvicorn[standard]
 pydantic
 redis
 pytest
+qdrant_client
+implicit
 
 aiohttp
 requests
