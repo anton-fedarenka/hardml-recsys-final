@@ -5,6 +5,7 @@ redis
 pytest
 qdrant_client
 implicit
+scikit-learn
 
 aiohttp
 requests
@@ -14,3 +15,5 @@ flask
 httpx
 numpy
 aio-pika
+loguru
+mlflow

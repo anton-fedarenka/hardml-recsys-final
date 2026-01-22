@@ -9,3 +9,5 @@ train_data/
 *.ipynb
 requirements_old.txt
 *.csv
+*.log
+*mlflow*
