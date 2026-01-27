@@ -13,12 +13,12 @@ app.secret_key = os.urandom(24)
 # interactions_url = 'http://135.181.153.151:5000'
 
 # Inside docker compose: 
-# recommendation_service_url = "http://recommendations_dc:5001"
-# interactions_url = 'http://0.0.0.0:5000'
+recommendation_service_url = "http://recommendations_dc:5001"
+interactions_url = 'http://0.0.0.0:5000'
 
 # Local: 
-recommendation_service_url = "http://127.0.0.1:5001"
-interactions_url = 'http://127.0.0.1:5000'
+# recommendation_service_url = "http://127.0.0.1:5001"
+# interactions_url = 'http://127.0.0.1:5000'
 
 links_data = (
     pl.read_csv('static/links.csv')
@@ -103,5 +103,5 @@ if __name__ == '__main__':
         "genres": movies_data['genres'].to_list()
     }
     requests.post(f'{recommendation_service_url}/add_items', json=data)
-    # app.run(debug=False, host='0.0.0.0', port=8000)
-    app.run(debug=False, port=8000)
+    app.run(debug=False, host='0.0.0.0', port=8000)
+    # app.run(debug=False, port=8000)

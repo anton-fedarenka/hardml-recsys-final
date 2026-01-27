@@ -16,8 +16,8 @@ queue_name = "user_interactions"
 routing_key = "user.interact.message"
 exchange = "user.interact"
 
-# _rabbitmq_url = "amqp://guest:guest@rabbitmq/"  # Replace with your RabbitMQ server URL
-_rabbitmq_url = "amqp://guest:guest@localhost/"
+_rabbitmq_url = "amqp://guest:guest@rabbitmq/"  # Replace with your RabbitMQ server URL
+# _rabbitmq_url = "amqp://guest:guest@localhost/"
 
 _rabbitmq_connection: AbstractRobustConnection = None
 _rabbitmq_exchange = None

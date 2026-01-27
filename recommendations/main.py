@@ -21,17 +21,16 @@ from bandit import ThompsonSamplingBandit
 app = FastAPI()
 
 # --------- Docker settings: ----------------
-# redis_connection = redis.Redis('redis')
-# qdrant_connection = QdrantClient("qdrant", port=6333)
-# mlflow.set_tracking_uri("http://mlflow-server:8080")
-# logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=False)
+redis_connection = redis.Redis('redis')
+qdrant_connection = QdrantClient("qdrant", port=6333)
+mlflow.set_tracking_uri("http://mlflow-server:8080")
+logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=False)
 # -------------------------------------------
 
 # --------- Local settings: -----------------
-redis_connection = redis.Redis('localhost') 
-qdrant_connection = QdrantClient("localhost", port=6333)
-# mlflow.set_tracking_uri("http://localhost:8080")
-logger.add('./logs/recommendations.log',enqueue=True, backtrace=False, colorize=True)
+# redis_connection = redis.Redis('localhost') 
+# qdrant_connection = QdrantClient("localhost", port=6333)
+# logger.add('./logs/recommendations.log',enqueue=True, backtrace=False, colorize=True)
 # -------------------------------------------
 
 unique_item_ids = set()

@@ -20,19 +20,19 @@ from qdrant_client.http.models import Distance, VectorParams, PointStruct, Searc
 from bandit import ThompsonSamplingBandit
 
 # --------- Docker settings: ----------------
-# redis_connection = redis.Redis('redis')
-# qdrant_connection = QdrantClient("qdrant", port=6333)
-# rabbitmq_url = "amqp://guest:guest@rabbitmq/"
-# recommendation_service_url = "http://recommendations_dc:5001"
-# logger.add('/logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=False) # Docker version
+redis_connection = redis.Redis('redis')
+qdrant_connection = QdrantClient("qdrant", port=6333)
+rabbitmq_url = "amqp://guest:guest@rabbitmq/"
+recommendation_service_url = "http://recommendations_dc:5001"
+logger.add('/logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=False) # Docker version
 # -------------------------------------------
 
 # --------- Local settings: -----------------
-redis_connection = redis.Redis('localhost')
-qdrant_connection = QdrantClient("localhost", port=6333)
-rabbitmq_url = "amqp://guest:guest@localhost/"
-recommendation_service_url = "http://127.0.0.1:5001"
-logger.add('./logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=True) # Local version
+# redis_connection = redis.Redis('localhost')
+# qdrant_connection = QdrantClient("localhost", port=6333)
+# rabbitmq_url = "amqp://guest:guest@localhost/"
+# recommendation_service_url = "http://127.0.0.1:5001"
+# logger.add('./logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=True) # Local version
 # -------------------------------------------
 
 movie_mapping = redis_connection.json().get('movie_ids_mapping') 
