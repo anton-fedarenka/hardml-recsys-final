@@ -1,11 +1,11 @@
 FROM python:3.12-bookworm
 
-WORKDIR /event_collector
+RUN mkdir /event_collector
 
-COPY ../requirements.txt .
+COPY event_collector/requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY ../watched_filter.py ../models.py ./
-COPY event_collector/main.py .
+COPY ./models.py ./
+COPY event_collector/main.py /event_collector
 
-CMD [ "uvicorn", "main:app", "--port", "5000", "--host", "0.0.0.0" ]
+# CMD [ "uvicorn", "main:app", "--port", "5000", "--host", "0.0.0.0" ]

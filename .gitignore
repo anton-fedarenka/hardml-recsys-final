@@ -10,4 +10,5 @@ train_data/
 requirements_old.txt
 *.csv
 *.log
-*mlflow*
+mlflow*
+*mlruns

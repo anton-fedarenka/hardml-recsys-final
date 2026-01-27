@@ -1,7 +1,7 @@
 import os
 import uuid
-import polars as pl
 
+import polars as pl
 import requests
 from flask import Flask, render_template, session, request
 
@@ -103,5 +103,5 @@ if __name__ == '__main__':
         "genres": movies_data['genres'].to_list()
     }
     requests.post(f'{recommendation_service_url}/add_items', json=data)
-    # app.run(debug=True, host='0.0.0.0', port=8000)
+    # app.run(debug=False, host='0.0.0.0', port=8000)
     app.run(debug=False, port=8000)

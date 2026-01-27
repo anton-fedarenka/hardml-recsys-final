@@ -1,36 +1,46 @@
 import asyncio
 import json
 import os.path
+import sys
 import time
+from dataclasses import asdict
+
 import numpy as np
 import scipy.sparse as ss
 import implicit
-
-import aio_pika
 import polars as pl
 import redis
-from aio_pika import Message
-from bandit import ThompsonSamplingBandit
-from dataclasses import asdict
-from loguru import logger
 import requests
-
+import aio_pika
+from aio_pika import Message
+from loguru import logger
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct, SearchRequest
 
+from bandit import ThompsonSamplingBandit
+
+# --------- Docker settings: ----------------
 # redis_connection = redis.Redis('redis')
+# qdrant_connection = QdrantClient("qdrant", port=6333)
+# rabbitmq_url = "amqp://guest:guest@rabbitmq/"
+# recommendation_service_url = "http://recommendations_dc:5001"
+# logger.add('/logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=False) # Docker version
+# -------------------------------------------
+
+# --------- Local settings: -----------------
 redis_connection = redis.Redis('localhost')
 qdrant_connection = QdrantClient("localhost", port=6333)
-
+rabbitmq_url = "amqp://guest:guest@localhost/"
 recommendation_service_url = "http://127.0.0.1:5001"
+logger.add('./logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=True) # Local version
+# -------------------------------------------
 
 movie_mapping = redis_connection.json().get('movie_ids_mapping') 
 movie_inv_mapping = {v: k for k, v in movie_mapping.items()}
 if not movie_mapping or len(movie_mapping) == 0: 
     raise TypeError("Error durring movie ids extraction: movie ids mapping is absent in redis database!")
 
-# logger.add('regular_pipeline.log',enqueue=True, backtrace=False)
-# sys.tracebacklimit = 4
+sys.tracebacklimit = 4
 
 bandit_params  = {
     'alpha_weight': 1,
@@ -68,8 +78,7 @@ async def collect_messages():
     global local_bandit
 
     connection = await aio_pika.connect_robust(
-        # "amqp://guest:guest@rabbitmq/",
-        "amqp://guest:guest@localhost/",
+        rabbitmq_url,
         loop=asyncio.get_event_loop()
     )
 
@@ -113,11 +122,11 @@ async def collect_messages():
                             _update_bandit(local_bandit, new_data)
                             
                             # ----- Saving interaction data ---------
-                            if os.path.exists('../data/interactions.csv'):
-                                data = pl.concat([pl.read_csv('../data/interactions.csv'), new_data])
+                            if os.path.exists('./data/interactions.csv'):
+                                data = pl.concat([pl.read_csv('./data/interactions.csv'), new_data])
                             else:
                                 data = new_data
-                            data.write_csv('../data/interactions.csv')
+                            data.write_csv('./data/interactions.csv')
 
                         data = []
                         t_start = time.time()
@@ -127,16 +136,17 @@ async def train_matrix_factorization():
     global movie_mapping
     global movie_inv_mapping
     while True:
-        if os.path.exists("../data/interactions.csv"):
+        if os.path.exists("./data/interactions.csv"):
             logger.info('Run matrix factorization')
-            interact_data = pl.read_csv('../data/interactions.csv')
+            interact_data = pl.read_csv('./data/interactions.csv')
             user_mapping = {user: i for i, user in enumerate(interact_data['user_id'].unique())}
             redis_connection.json().set('user_mapping', '.', user_mapping)
             
             if redis_connection.json().get('clear'):
-                print(f'in cleaning')
+                logger.info(f'Updating movie items and bandit instance')
                 movie_mapping = redis_connection.json().get('movie_ids_mapping')
                 if not movie_mapping: 
+                    await asyncio.sleep(30)
                     continue
                 movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
                 redis_connection.json().set('clear','.',False)
@@ -224,6 +234,7 @@ async def calculate_top_recommendations():
             logger.info(f'Updating movie items and bandit instance')
             movie_mapping = redis_connection.json().get('movie_ids_mapping')
             if not movie_mapping: 
+                await asyncio.sleep(10)
                 continue
             movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
             local_bandit = _create_bandit_instance(
@@ -233,9 +244,9 @@ async def calculate_top_recommendations():
                 )
             redis_connection.json().set('clear','.',False)
             
-            if os.path.exists('../data/interactions.csv'):
-                interactions = pl.read_csv('../data/interactions.csv')
-                update_bandit(local_bandit, interactions)
+            if os.path.exists('./data/interactions.csv'):
+                interactions = pl.read_csv('./data/interactions.csv')
+                _update_bandit(local_bandit, interactions)
 
         # bandit = ThompsonSamplingBandit(len(movie_ids_list), alpha_weight=1, beta_weight=5)
 #             top_items = (

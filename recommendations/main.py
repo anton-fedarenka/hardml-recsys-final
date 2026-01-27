@@ -15,13 +15,24 @@ from loguru import logger
 import mlflow
 
 from models import InteractEvent, RecommendationsResponse, NewItemsEvent
-from regular_pipeline.bandit import ThompsonSamplingBandit
+from bandit import ThompsonSamplingBandit
+# from regular_pipeline.bandit import ThompsonSamplingBandit
 
 app = FastAPI()
 
+# --------- Docker settings: ----------------
 # redis_connection = redis.Redis('redis')
+# qdrant_connection = QdrantClient("qdrant", port=6333)
+# mlflow.set_tracking_uri("http://mlflow-server:8080")
+# logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=False)
+# -------------------------------------------
+
+# --------- Local settings: -----------------
 redis_connection = redis.Redis('localhost') 
 qdrant_connection = QdrantClient("localhost", port=6333)
+# mlflow.set_tracking_uri("http://localhost:8080")
+logger.add('./logs/recommendations.log',enqueue=True, backtrace=False, colorize=True)
+# -------------------------------------------
 
 unique_item_ids = set()
 movie_mapping = None
@@ -45,7 +56,6 @@ bandit_params  = {
 }
 redis_connection.json().set('bandit_params','.',bandit_params)
 
-logger.add('recommendations.log',enqueue=True, backtrace=False)
 sys.tracebacklimit = 4
 # mlflow_experiment_id = mlflow.create_experiment('experiment_1')
 with mlflow.start_run() as run:
@@ -61,26 +71,43 @@ def healthcheck():
 @app.get('/cleanup')
 def cleanup():
     global unique_item_ids
+    global df_rec_history
+    global df_hist_diversity
+    
     unique_item_ids = set()
     rec_history = {}
     try:
         # redis_connection.delete('*')
         # redis_connection.json().delete('*')
         # redis_connection.flushall()
-        redis_connection.json().delete('thompson_top')
-        redis_connection.json().delete('movie_ids_mapping')
-        redis_connection.json().delete('bandit_state')
+        # redis_connection.json().delete('thompson_top')
+        # redis_connection.json().delete('movie_ids_mapping')
+        # redis_connection.json().delete('bandit_state')
+        # redis_connection.json().delete('user_mapping')
+        redis_connection.flushdb() # Delete all keys from redis
         redis_connection.json().set('clear','.', True)
     except redis.exceptions.ConnectionError:
         logger.exception("Redis connection failure while cleaning.")
 
-    # Saving dataframes to csv files:
-    os.makedirs('./data/history', exist_ok=True)
-    suffix = time.strftime("%H_%M_%S", time.localtime())
-    df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
-    df_hist_diversity.write_csv(f'./data/history/diversity_{suffix}.csv')
-    df_rec_history = None
-    df_hist_diversity = None
+    try:
+        qdrant_connection.delete_collection(collection_name="movie_embs")
+    except Exception as e: 
+        logger.exception(f'Exception occurs when qdrant collection deleting: {e}')
+
+    try: 
+        if df_rec_history is not None: 
+            # Saving dataframes to csv files:
+            os.makedirs('./data/history', exist_ok=True)
+            suffix = time.strftime("%H_%M_%S", time.localtime())
+            # logger.warning(f'!!!>>> df_rec_history = {df_rec_history}')
+            df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
+            if df_hist_diversity is not None: 
+                df_hist_diversity.write_csv(f'./data/history/diversity_{suffix}.csv')
+            df_rec_history = None
+            df_hist_diversity = None
+    except Exception as e: 
+        logger.exception(f'Exception occurs while history dataframes saving: {e}')
+        
     if os.path.exists('./data/interactions.csv'):
         # suffix = int(time.time())
         os.rename('./data/interactions.csv', f'./data/interactions_{suffix}.csv')
@@ -124,6 +151,7 @@ def get_recs(user_id: str):
     global unique_item_ids
     global rec_history
     global df_rec_history
+    global df_hist_diversity
     global response_td
     global top_response_td
     global pers_response_td
@@ -138,7 +166,7 @@ def get_recs(user_id: str):
 
     if user_mapping and user_id in user_mapping:
         pers_t_start = time.time()
-        logger.info("Retriving personal recommentdations")
+        logger.info(f"Retriving personal recommentdations for user {user_id}")
         try: 
             item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
         except Exception as e:
@@ -180,6 +208,12 @@ def get_recs(user_id: str):
         df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
     except Exception: 
         logger.exception("Exception whitle df_rec_history dataframe updating")
+
+    # print(f'df_rec_history = {df_rec_history}')
+    # print(f'df_hist_diversity = {df_hist_diversity}')
+    # os.makedirs('./data/history', exist_ok=True)
+    # suffix = time.strftime("%H_%M_%S", time.localtime())
+    # df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
     
     response_td.append(time.time() - t_response_start)
 
@@ -188,10 +222,10 @@ def get_recs(user_id: str):
 @logger.catch
 def _get_thompson_top(k: int) -> List[int]:  
     try: 
-        bandit_params = redis_connection.json().get('bandit_state')
+        bandit_state = redis_connection.json().get('bandit_state')
     except redis.exceptions.ConnectionError:
         logger.exception(f'Exception while Redis connecting: Conncection fail while retrieve current thompson bandit state')
-    return ThompsonSamplingBandit(**bandit_params).get_top_indices(k)
+    return ThompsonSamplingBandit(**bandit_state).get_top_indices(k)
 
 #     return hist
 
@@ -216,7 +250,7 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
 
     # If retrieved number of recs is enough, can apply for the diversity correction: 
     # if len(rec_indices) > TOP_K:
-    logger.info(f'Diversity calculation')
+    # logger.info(f'Diversity calculation')
     try:
         rec_vecs = np.array([
             v.vector for v in 
@@ -237,7 +271,7 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
         rec_scores += diversity_coeff * divers # May be unnecessary in the case of len(rec_indeces) < TOP_K and could redece NDCG@k?... 
     
     # If there is a user history, the unexpectedness value can also be taken in account:
-    logger.info('Enexpectedness calculation')
+    # logger.info('Enexpectedness calculation')
     try:
         hist_vecs = np.array([
             v.vector for v in
@@ -311,7 +345,7 @@ def precision(recs: List[Any], likes: List[Any]):
     if len(likes) == 0:
         return 0
     if len(recs) == 0:
-        logger.warning("Exception while precision calculation: list of recommendations is empty!")
+        # logger.warning("Exception while precision calculation: list of recommendations is empty!")
         return None
     return len(set(recs).intersection(set(likes)))/len(recs) # len(y_rec[:k])
 

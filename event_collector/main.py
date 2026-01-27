@@ -9,14 +9,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import InteractEvent
-from watched_filter import WatchedFilter
 
 app = FastAPI()
-watched_filter = WatchedFilter()
 
 queue_name = "user_interactions"
 routing_key = "user.interact.message"
 exchange = "user.interact"
+
+# _rabbitmq_url = "amqp://guest:guest@rabbitmq/"  # Replace with your RabbitMQ server URL
+_rabbitmq_url = "amqp://guest:guest@localhost/"
 
 _rabbitmq_connection: AbstractRobustConnection = None
 _rabbitmq_exchange = None
@@ -52,8 +53,7 @@ async def create_rabbitmq_exchange() -> AbstractRobustExchange:
     global _rabbitmq_exchange, _rabbitmq_connection
     if _rabbitmq_exchange is None or _rabbitmq_connection.is_closed:
         _rabbitmq_connection = await aio_pika.connect_robust(
-            # "amqp://guest:guest@rabbitmq/",  # Replace with your RabbitMQ server URL
-            "amqp://guest:guest@localhost/",  # Replace with your RabbitMQ server URL
+            _rabbitmq_url, 
             loop=asyncio.get_event_loop()
         )
 
