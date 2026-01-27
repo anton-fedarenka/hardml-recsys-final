@@ -1,0 +1,4 @@
+aio-pika
+fastapi
+uvicorn[standard]
+pydantic

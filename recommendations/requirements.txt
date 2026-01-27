@@ -1,0 +1,10 @@
+numpy
+polars
+redis
+fastapi
+uvicorn[standard]
+pydantic
+scikit-learn
+qdrant_client
+loguru
+mlflow

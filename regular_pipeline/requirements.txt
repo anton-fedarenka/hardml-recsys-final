@@ -1,0 +1,9 @@
+numpy
+scipy
+implicit
+polars
+redis
+requests
+aio_pika 
+loguru
+qdrant_client
