@@ -10,12 +10,12 @@ app.secret_key = os.urandom(24)
 
 # On VM:
 vm_host = "89.167.19.169"
-recommendation_service_url = "http://recommendations_dc:5001"
-interactions_url = f'http://{vm_host}:5000'
+# recommendation_service_url = "http://recommendations_dc:5001"
+# interactions_url = f'http://{vm_host}:5000'
 
 # Inside docker compose: 
-# recommendation_service_url = "http://recommendations_dc:5001"
-# interactions_url = 'http://0.0.0.0:5000'
+recommendation_service_url = "http://recommendations_dc:5001"
+interactions_url = 'http://0.0.0.0:5000'
 
 # Local: 
 # recommendation_service_url = "http://127.0.0.1:5001"

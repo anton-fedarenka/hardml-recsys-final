@@ -34,8 +34,8 @@ logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=F
 # -------------------------------------------
 
 unique_item_ids = set()
-movie_mapping = None
-movie_inv_mapping = None
+movie_mapping = {}
+movie_inv_mapping = {}
 
 rec_history = {}
 df_rec_history = None
@@ -64,6 +64,7 @@ with mlflow.start_run() as run:
 
 @app.get('/healthcheck')
 def healthcheck():
+    logger.warning("!!! HEALTH CHECK !!!")
     return 200
 
 
@@ -72,9 +73,14 @@ def cleanup():
     global unique_item_ids
     global df_rec_history
     global df_hist_diversity
+    global rec_history
+    global movie_mapping
+    global movie_inv_mapping
     
     unique_item_ids = set()
     rec_history = {}
+    movie_mapping = {}
+    movie_inv_mapping = {}
     try:
         # redis_connection.delete('*')
         # redis_connection.json().delete('*')
@@ -108,7 +114,7 @@ def cleanup():
         logger.exception(f'Exception occurs while history dataframes saving: {e}')
         
     if os.path.exists('./data/interactions.csv'):
-        # suffix = int(time.time())
+        suffix = time.strftime("%H_%M_%S", time.localtime())
         os.rename('./data/interactions.csv', f'./data/interactions_{suffix}.csv')
 
     logger.warning('>>> Cleaned up! <<<')
@@ -129,14 +135,16 @@ def add_movie(request: NewItemsEvent):
     # df.drop_duplicates(inplace=True)
 
     # Write down the added items to the file for further testing
-    suffix = time.strftime("%H_%M_%S", time.localtime())
+    # suffix = time.strftime("%H_%M_%S", time.localtime())
+    suffix = round(time.time() * 1e6)
     filepath = f'./data/added_items/item_batch_{suffix}.json'
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath,'w') as f:
         json.dump(request.model_dump(), f)
 
-    movie_mapping = {movie_id: i for i, movie_id in enumerate(request.item_ids)}
-    movie_inv_mapping = {i: movie_id for i, movie_id in enumerate(request.item_ids)}
+    n = len(movie_mapping)
+    movie_mapping = {movie_id: n + i for i, movie_id in enumerate(request.item_ids)}
+    movie_inv_mapping = {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
     redis_connection.json().set('movie_ids_mapping','.',movie_mapping)
 
     for item_id in request.item_ids:
@@ -206,7 +214,7 @@ def get_recs(user_id: str):
     try:
         df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
     except Exception: 
-        logger.exception("Exception whitle df_rec_history dataframe updating")
+        logger.exception("Exception while df_rec_history dataframe updating")
 
     # print(f'df_rec_history = {df_rec_history}')
     # print(f'df_hist_diversity = {df_hist_diversity}')
@@ -333,7 +341,7 @@ def _update_history_df(user_id, recs, time_mark, df_hist = None):
             'item_id': recs, 
             'timestamp':time_mark
         }
-        ).with_columns(pl.col('item_id').cast(pl.Int64))
+        ).with_columns(pl.col('item_id').cast(pl.Utf8))
     if df_hist is None:
         df = new_data
     else:

@@ -109,13 +109,13 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 10:
+                    if time.time() - t_start > 5:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
                             'item_ids': 'item_id',
                             'actions': 'action'
-                        }).with_columns(pl.col('item_id').cast(pl.Int64))
+                        }).with_columns(pl.col('item_id').cast(pl.Utf8))
 
                         if len(new_data) > 0:
                             # --- Training thompson sampling algorithm of manyhands bandits --- 
@@ -123,7 +123,8 @@ async def collect_messages():
                             
                             # ----- Saving interaction data ---------
                             if os.path.exists('./data/interactions.csv'):
-                                data = pl.concat([pl.read_csv('./data/interactions.csv'), new_data])
+                                df = pl.read_csv('./data/interactions.csv').with_columns(pl.col('item_id').cast(pl.Utf8))
+                                data = pl.concat([df, new_data])
                             else:
                                 data = new_data
                             data.write_csv('./data/interactions.csv')
@@ -146,7 +147,7 @@ async def train_matrix_factorization():
                 logger.info(f'Updating movie items and bandit instance')
                 movie_mapping = redis_connection.json().get('movie_ids_mapping')
                 if not movie_mapping: 
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(20)
                     continue
                 movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
                 redis_connection.json().set('clear','.',False)
@@ -220,7 +221,7 @@ async def train_matrix_factorization():
             for user_id in user_mapping: 
                 redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(20)
 
 
 async def calculate_top_recommendations():
@@ -271,11 +272,12 @@ async def calculate_top_recommendations():
         # Save bandit state to use it in recommendation service: 
         redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
 
 async def dump_metrics():
     while True: 
+        logger.info('dump metrics')
         try:
             requests.get(f'{recommendation_service_url}/calc_metrics')
         except Exception as e:
