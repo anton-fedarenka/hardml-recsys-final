@@ -104,7 +104,7 @@ def cleanup():
         # redis_connection.json().delete('bandit_state')
         # redis_connection.json().delete('user_mapping')
         redis_connection.flushdb() # Delete all keys from redis
-        redis_connection.json().set('clear','.', True)
+        # redis_connection.json().set('clear','.', True)
     except redis.exceptions.ConnectionError:
         logger.exception("Redis connection failure while cleaning.")
 
