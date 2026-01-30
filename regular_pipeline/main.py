@@ -119,7 +119,7 @@ async def collect_messages():
         channel = await connection.channel()
 
         # Will take no more than 10 messages in advance
-        await channel.set_qos(prefetch_count=10)
+        await channel.set_qos(prefetch_count=50)
 
         # Declaring queue
         queue = await channel.declare_queue(queue_name)
