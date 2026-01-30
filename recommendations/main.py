@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import json
+from dataclasses import asdict
 
 import numpy as np
 import polars as pl
@@ -15,7 +16,7 @@ from loguru import logger
 import mlflow
 
 from models import InteractEvent, RecommendationsResponse, NewItemsEvent
-from bandit import ThompsonSamplingBandit
+from bandit import ThompsonSamplingBandit, create_bandit_instance
 # from regular_pipeline.bandit import ThompsonSamplingBandit
 
 app = FastAPI()
@@ -55,6 +56,9 @@ bandit_params  = {
 }
 redis_connection.json().set('bandit_params','.',bandit_params)
 
+phase = 0
+batch = 0
+
 sys.tracebacklimit = 4
 # mlflow_experiment_id = mlflow.create_experiment('experiment_1')
 with mlflow.start_run() as run:
@@ -76,6 +80,16 @@ def cleanup():
     global rec_history
     global movie_mapping
     global movie_inv_mapping
+    global phase
+    global batch
+
+    logger.warning("Cleaning procedure has been called!..")
+
+    if phase > 0:
+        calc_metrics()
+    
+    phase += 1
+    batch = 0
     
     unique_item_ids = set()
     rec_history = {}
@@ -103,19 +117,19 @@ def cleanup():
         if df_rec_history is not None: 
             # Saving dataframes to csv files:
             os.makedirs('./data/history', exist_ok=True)
-            suffix = time.strftime("%H_%M_%S", time.localtime())
+            #suffix = time.strftime("%H_%M_%S", time.localtime())
             # logger.warning(f'!!!>>> df_rec_history = {df_rec_history}')
-            df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
+            df_rec_history.write_csv(f'./data/history/recommendations_ph_{phase}.csv')
             if df_hist_diversity is not None: 
-                df_hist_diversity.write_csv(f'./data/history/diversity_{suffix}.csv')
+                df_hist_diversity.write_csv(f'./data/history/diversity_ph_{phase}.csv')
             df_rec_history = None
             df_hist_diversity = None
     except Exception as e: 
         logger.exception(f'Exception occurs while history dataframes saving: {e}')
         
     if os.path.exists('./data/interactions.csv'):
-        suffix = time.strftime("%H_%M_%S", time.localtime())
-        os.rename('./data/interactions.csv', f'./data/interactions_{suffix}.csv')
+        #suffix = time.strftime("%H_%M_%S", time.localtime())
+        os.rename('./data/interactions.csv', f'./data/interactions_ph_{phase}.csv')
 
     logger.warning('>>> Cleaned up! <<<')
     return 200
@@ -126,6 +140,7 @@ def add_movie(request: NewItemsEvent):
     global unique_item_ids
     global movie_mapping
     global movie_inv_mapping
+    global batch
 
     logger.warning("Add new data")
 
@@ -136,16 +151,22 @@ def add_movie(request: NewItemsEvent):
 
     # Write down the added items to the file for further testing
     # suffix = time.strftime("%H_%M_%S", time.localtime())
-    suffix = round(time.time() * 1e6)
-    filepath = f'./data/added_items/item_batch_{suffix}.json'
+    # suffix = round(time.time() * 1e6)
+    batch += 1
+    filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath,'w') as f:
         json.dump(request.model_dump(), f)
 
     n = len(movie_mapping)
-    movie_mapping = {movie_id: n + i for i, movie_id in enumerate(request.item_ids)}
-    movie_inv_mapping = {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
-    redis_connection.json().set('movie_ids_mapping','.',movie_mapping)
+    movie_mapping.update(
+        {movie_id: n + i for i, movie_id in enumerate(request.item_ids)}
+        )
+    movie_inv_mapping.update(
+        {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
+        )
+    redis_connection.json().set('movie_mapping','.',movie_mapping)
+    redis_connection.json().set('movie_inv_mapping','.',movie_inv_mapping)
 
     for item_id in request.item_ids:
         unique_item_ids.add(item_id)
@@ -226,15 +247,20 @@ def get_recs(user_id: str):
 
     return RecommendationsResponse(item_ids=item_ids)
 
+
 @logger.catch
 def _get_thompson_top(k: int) -> List[int]:  
     try: 
         bandit_state = redis_connection.json().get('bandit_state')
     except redis.exceptions.ConnectionError:
         logger.exception(f'Exception while Redis connecting: Conncection fail while retrieve current thompson bandit state')
-    return ThompsonSamplingBandit(**bandit_state).get_top_indices(k)
+    if bandit_state is None: 
+        local_bandit = create_bandit_instance(n_arms=len(movie_mapping), **bandit_params)
+        redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
+    else: 
+        local_bandit = ThompsonSamplingBandit(**bandit_state)
+    return local_bandit.get_top_indices(k)
 
-#     return hist
 
 @logger.catch
 def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, min_score: float = -float("inf")): 
@@ -251,6 +277,11 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
         return []
 
     rec_indices = [s.id for s in closest_points if movie_inv_mapping[s.id] not in user_history and s.score > min_score]
+    if len(rec_indices) == 0:
+        return []
+    elif len(rec_indices) == 1: 
+        return [movie_inv_mapping[rec_indices[0]]]
+
     rec_scores = np.array([s.score for s in closest_points if s.id in rec_indices])
     divers = np.zeros(rec_scores.size)
     unexpect = np.zeros(rec_scores.size)
@@ -258,6 +289,8 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
     # If retrieved number of recs is enough, can apply for the diversity correction: 
     # if len(rec_indices) > TOP_K:
     # logger.info(f'Diversity calculation')
+    rec_vecs = []
+    hist_vecs = []
     try:
         rec_vecs = np.array([
             v.vector for v in 
@@ -357,15 +390,17 @@ def precision(recs: List[Any], likes: List[Any]):
     return len(set(recs).intersection(set(likes)))/len(recs) # len(y_rec[:k])
 
 
-@app.get('/calc_metrics')
+# @app.get('/calc_metrics')
+@logger.catch
 def calc_metrics(): 
+    logger.info('.... Calculation of metrics.... ')
     # t_start = time.time()
     if not os.path.exists('./data/interactions.csv'):
         logger.warning('Exception during metric calculation: file with interactions does not exist ')
-        return 200
+        return # 200
     if not rec_history:
         logger.warning('Exception during metric calculation: recommendation history does not exist ')
-        return 200
+        return # 200
     df = (
         pl.read_csv('./data/interactions.csv')
         .filter(pl.col('action') == 'like')
@@ -396,10 +431,10 @@ def calc_metrics():
     
     if any(v is None for v in metrics.values()):
         logger.warning(f'Unable to log metrics in mlflow: {metrics}')
-        return 200
+        return # 200
 
     with mlflow.start_run(run_id=mlflow_run_id) as run:
         mlflow.log_metrics(metrics)
         # mlflow.log_metric('calc_metric_time', time.time() - t_start)
 
-    return 200
+    return # 200

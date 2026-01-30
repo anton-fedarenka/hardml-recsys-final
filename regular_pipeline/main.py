@@ -17,7 +17,7 @@ from loguru import logger
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct, SearchRequest
 
-from bandit import ThompsonSamplingBandit
+from bandit import ThompsonSamplingBandit, create_bandit_instance
 
 # --------- Docker settings: ----------------
 redis_connection = redis.Redis('redis')
@@ -35,8 +35,9 @@ logger.add('/logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=
 # logger.add('./logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=True) # Local version
 # -------------------------------------------
 
-movie_mapping = redis_connection.json().get('movie_ids_mapping') 
-movie_inv_mapping = {v: k for k, v in movie_mapping.items()}
+movie_mapping = redis_connection.json().get('movie_mapping') 
+movie_inv_mapping = redis_connection.json().get('movie_inv_mapping')
+# movie_inv_mapping = {v: k for k, v in movie_mapping.items()}
 if not movie_mapping or len(movie_mapping) == 0: 
     raise TypeError("Error durring movie ids extraction: movie ids mapping is absent in redis database!")
 
@@ -47,35 +48,63 @@ bandit_params  = {
     'beta_weight': 4 
 }
 
-def _create_bandit_instance(n_arms: int, alpha_weight: int = 1, beta_weight: int = 1):
-    return ThompsonSamplingBandit(
-        alpha = np.ones(n_arms).tolist(),
-        beta =  np.ones(n_arms).tolist(),
-        alpha_weight=alpha_weight, 
-        beta_weight=beta_weight
-        )
+# local_bandit = create_bandit_instance(
+#     n_arms = len(movie_mapping), 
+#     alpha_weight = bandit_params['alpha_weight'],
+#     beta_weight = bandit_params['beta_weight']
+#     )
 
-def _update_bandit(bandit_instance: ThompsonSamplingBandit, data: pl.DataFrame) -> None: 
+
+def _update_data() -> bool:
+    global local_bandit
+    global movie_mapping
+    global movie_inv_mapping
+
+    # Updating thompson sampling bandit if clean process is triggered
+    logger.info(f'Updating movie items and bandit instance')
+    movie_mapping = redis_connection.json().get('movie_mapping')
+    if not movie_mapping: 
+        return False
+    movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
+    try:
+        local_bandit = create_bandit_instance(
+            n_arms=len(movie_mapping), 
+            alpha_weight=bandit_params['alpha_weight'], 
+            beta_weight=bandit_params['beta_weight']
+            )
+    except Exception as e:
+        logger.exception(f'Exception while local_bandit updating in_update_data: {e}')
+        return False
+    return True
+
+
+def _update_bandit(data: pl.DataFrame) -> None: 
     data_likes = (
         data
         .with_columns(pl.col('item_id').cast(pl.Utf8))
         .group_by(['item_id','action'])
         .len()
     )
+    bandit_state = redis_connection.json().get('bandit_state')
+    if bandit_state is None: 
+        logger.warning(f'Cannot update bandit state since bandit_state in redis database is empty!!!')
+        return
+
+    movie_mapping = redis_connection.json().get('movie_mapping')
+    if movie_mapping is None:
+        logger.warning(f'Cannot update bandit state since movie_mapping in redis database is empty!!!')
+        return
+
+    bandit_instance = ThompsonSamplingBandit(**bandit_state)
+
     for item_id, action, num in data_likes.rows():
         bandit_instance.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
+    redis_connection.json().set('bandit_state', '.', asdict(bandit_instance))
     return 
 
 
-local_bandit = _create_bandit_instance(
-    n_arms = len(movie_mapping), 
-    alpha_weight = bandit_params['alpha_weight'],
-    beta_weight = bandit_params['beta_weight']
-    )
-
 
 async def collect_messages():
-    global local_bandit
 
     connection = await aio_pika.connect_robust(
         rabbitmq_url,
@@ -119,7 +148,7 @@ async def collect_messages():
 
                         if len(new_data) > 0:
                             # --- Training thompson sampling algorithm of manyhands bandits --- 
-                            _update_bandit(local_bandit, new_data)
+                            _update_bandit(new_data)
                             
                             # ----- Saving interaction data ---------
                             if os.path.exists('./data/interactions.csv'):
@@ -134,8 +163,6 @@ async def collect_messages():
 
 
 async def train_matrix_factorization():
-    global movie_mapping
-    global movie_inv_mapping
     while True:
         if os.path.exists("./data/interactions.csv"):
             logger.info('Run matrix factorization')
@@ -143,14 +170,13 @@ async def train_matrix_factorization():
             user_mapping = {user: i for i, user in enumerate(interact_data['user_id'].unique())}
             redis_connection.json().set('user_mapping', '.', user_mapping)
             
-            if redis_connection.json().get('clear'):
-                logger.info(f'Updating movie items and bandit instance')
-                movie_mapping = redis_connection.json().get('movie_ids_mapping')
-                if not movie_mapping: 
-                    await asyncio.sleep(20)
-                    continue
-                movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
-                redis_connection.json().set('clear','.',False)
+            # if redis_connection.json().get('clear'):
+            #     _update_data(sleep_time = 20) # Update data of movies ids and Thompson bandit state 
+            #     redis_connection.json().set('clear','.',False)
+            movie_mapping = redis_connection.json().get('movie_mapping')
+            if movie_mapping is None:
+                asyncio.sleep(5)
+                continue
             
             df = (
                 interact_data
@@ -221,7 +247,7 @@ async def train_matrix_factorization():
             for user_id in user_mapping: 
                 redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(20)
+        await asyncio.sleep(15)
 
 
 async def calculate_top_recommendations():
@@ -232,17 +258,9 @@ async def calculate_top_recommendations():
     while True:
         if redis_connection.json().get('clear'):
             # Updating thompson sampling bandit if clean process is triggered
-            logger.info(f'Updating movie items and bandit instance')
-            movie_mapping = redis_connection.json().get('movie_ids_mapping')
-            if not movie_mapping: 
-                await asyncio.sleep(10)
+            if not _update_data(): 
+                asyncio.sleep(5)
                 continue
-            movie_inv_mapping = {v: k for k, v in movie_mapping.items()} 
-            local_bandit = _create_bandit_instance(
-                n_arms=len(movie_mapping), 
-                alpha_weight=bandit_params['alpha_weight'], 
-                beta_weight=bandit_params['beta_weight']
-                )
             redis_connection.json().set('clear','.',False)
             
             if os.path.exists('./data/interactions.csv'):
@@ -289,9 +307,9 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
-        calculate_top_recommendations(),
         train_matrix_factorization(),
-        dump_metrics()
+        # calculate_top_recommendations(),
+        # dump_metrics()
     )
 
 

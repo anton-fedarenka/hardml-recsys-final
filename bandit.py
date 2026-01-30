@@ -32,3 +32,12 @@ class ThompsonSamplingBandit():
         else:
             self.beta[arm_ind] += n
         return
+
+
+def create_bandit_instance(n_arms: int, alpha_weight: int = 1, beta_weight: int = 1):
+    return ThompsonSamplingBandit(
+        alpha = np.ones(n_arms).tolist(),
+        beta =  np.ones(n_arms).tolist(),
+        alpha_weight=alpha_weight, 
+        beta_weight=beta_weight
+        )
