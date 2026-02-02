@@ -63,6 +63,7 @@ sys.tracebacklimit = 4
 # mlflow_experiment_id = mlflow.create_experiment('experiment_1')
 with mlflow.start_run() as run:
     mlflow_run_id = run.info.run_id
+    mlflow.log_params(bandit_params)
     # redis_connection.json().set('mlflow_run_id','.',mlflow_run_id)
 
 
@@ -193,15 +194,15 @@ def get_recs(user_id: str):
     history = rec_history.get(user_id, [])
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
-    if user_mapping and user_id in user_mapping:
-        pers_t_start = time.time()
-        logger.info(f"Retriving personal recommentdations for user {user_id}")
-        try: 
-            item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
-        except Exception as e:
-            logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
-            item_ids = []            
-        pers_response_td.append(time.time() - pers_t_start)
+    # if user_mapping and user_id in user_mapping:
+    #     pers_t_start = time.time()
+    #     logger.info(f"Retriving personal recommentdations for user {user_id}")
+    #     try: 
+    #         item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
+    #     except Exception as e:
+    #         logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
+    #         item_ids = []            
+    #     pers_response_td.append(time.time() - pers_t_start)
 
     if len(item_ids) < TOP_K:
         logger.info(f"Getting thompson top for user {user_id}")

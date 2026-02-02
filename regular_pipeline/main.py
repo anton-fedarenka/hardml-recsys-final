@@ -311,7 +311,7 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
-        train_matrix_factorization(),
+        # train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()
     )
