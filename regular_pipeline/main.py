@@ -12,6 +12,7 @@ import polars as pl
 import redis
 import requests
 import aio_pika
+from sklearn.preprocessing import normalize
 from aio_pika import Message
 from loguru import logger
 from qdrant_client import QdrantClient
@@ -47,6 +48,10 @@ bandit_params  = {
     'alpha_weight': 1,
     'beta_weight': 4 
 }
+
+N_recs = 100
+calc_diversity_flag = True
+divers_coeff = 0.1
 
 # local_bandit = create_bandit_instance(
 #     n_arms = len(movie_mapping), 
@@ -182,7 +187,7 @@ async def train_matrix_factorization():
                 interact_data
                 .sort(by='timestamp', descending=True)
                 # !!!!!!!! Remove in prod!!!!!!
-                .unique(subset = ['user_id','item_id'], keep='first') 
+                # .unique(subset = ['user_id','item_id'], keep='first') 
                 .with_columns([
                     pl.col('action').replace({'like': 1, 'dislike': -1}).cast(int).alias('value'),
                     pl.col('user_id').replace(user_mapping).cast(int).alias('user_index'),
@@ -205,47 +210,46 @@ async def train_matrix_factorization():
             
             logger.info('... Train BPR')
 
-            bpr_model = implicit.bpr.BayesianPersonalizedRanking(
+            model = implicit.bpr.BayesianPersonalizedRanking(
                 random_state=42,
                 )
-            bpr_model.fit(users_movies_data)
+            model.fit(users_movies_data)
 
-            movie_embs = bpr_model.item_factors
-            user_embs  = bpr_model.user_factors
+            movie_embs = model.item_factors
+            user_embs  = model.user_factors
             
-            cct_start = time.time()
-            qdrant_connection.recreate_collection(
-                collection_name="movie_embs",
-                # задаем размерность векторов и метрику дистанции
-                vectors_config=VectorParams(size=movie_embs.shape[1], distance=Distance.COSINE),
-            )
+            rec_start = time.time()
+            rec_indeces, rec_scores = model.recommend(
+                userid = np.arange(users_movies_data.shape[0]), 
+                user_items = users_movies_data,
+                N = N_recs)
+            rec_time = round((time.time() - rec_start) * 1e3, 3)
+            logger.info(f'Recommendation time = {rec_time} ms')
+            
+            if calc_diversity_flag:
+                div_start = time.time()
+                emb_size = movie_embs.shape[1]
+                norm_movie_embs = normalize(movie_embs[rec_indeces].reshape(-1, emb_size), axis=1).reshape(-1,N_recs,emb_size)
+                diversity = 1 - np.einsum('bij,bkj->bi', norm_movie_embs, norm_movie_embs)/N_recs
+                rec_scores += divers_coeff * diversity
+                score_args_sorted = rec_scores.argsort(axis=-1)[:,::-1]
+                rec_indeces = np.take_along_axis(rec_indeces, score_args_sorted, axis=1)
+                rec_scores = np.take_along_axis(rec_scores, score_args_sorted, axis=1)
+                
+                div_time = round((time.time() - div_start) * 1e3, 3)
+                logger.info(f'Diversity calc time = {div_time} ms')
 
-            # To add all item embeddings to qdrant database, but there are many all zero vectors. 
-            # Hence, this operation is very time consumming.
-            # qdrant_connection.upsert(
-            #     collection_name="movie_embs",
-            #     points=[
-            #         PointStruct(id = idx, vector = emb.tolist())
-            #         for idx, emb in enumerate(movie_embs)
-            #     ]
-            # )
+            cc_start  = time.time()
+            for user_id in user_mapping:
+                user_num = user_mapping[user_id]
+                positive_recs = rec_indeces[user_num][rec_scores[user_num] > 0]
+                recs = [movie_inv_mapping[i] for i in positive_recs]
+                redis_connection.json().set(f'user_recs_{user_id}','.',recs)
+            cc_time = round((time.time() - cc_start) * 1e3, 3)
+            logger.info(f'Recommendation collection creation time = {cc_time} ms')
 
-            # To add only nonzero vectors to the qdrant db: 
-            mask = ~np.all(movie_embs == 0, axis =1)
-            pos_idxs = np.where(mask)[0].tolist()
-
-            qdrant_connection.upsert(
-                collection_name="movie_embs",
-                points=[
-                    PointStruct(id = idx, vector = movie_embs[idx].tolist())
-                    for idx in pos_idxs
-                ]
-            )
-            create_coll_time = round(time.time() - cct_start, 5)
-            logger.info(f'qdrant collection creation time = {create_coll_time} s')
-
-            for user_id in user_mapping: 
-                redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
+            # for user_id in user_mapping: 
+            #     redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
         await asyncio.sleep(15)
 
