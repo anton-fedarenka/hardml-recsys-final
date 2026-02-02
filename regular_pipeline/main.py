@@ -100,6 +100,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
     for item_id, action, num in data_likes.rows():
         bandit_instance.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
     redis_connection.json().set('bandit_state', '.', asdict(bandit_instance))
+    logger.info('Bandit state is updated successfully!')
     return 
 
 
@@ -203,15 +204,18 @@ async def train_matrix_factorization():
                 values.extend(likes)
             users_movies_data =  ss.csr_matrix((values, (rows, cols)), dtype = np.float32)
             
-            logger.info('... Train BPR')
+            logger.info('... Train ALS')
 
-            bpr_model = implicit.bpr.BayesianPersonalizedRanking(
-                random_state=42,
-                )
-            bpr_model.fit(users_movies_data)
+            # model = implicit.bpr.BayesianPersonalizedRanking(
+            #     random_state=42,
+            #     )
+            model = implicit.als.AlternatingLeastSquares(
+                random_state=42
+            )
+            model.fit(users_movies_data)
 
-            movie_embs = bpr_model.item_factors
-            user_embs  = bpr_model.user_factors
+            movie_embs = model.item_factors
+            user_embs  = model.user_factors
             
             cct_start = time.time()
             qdrant_connection.recreate_collection(

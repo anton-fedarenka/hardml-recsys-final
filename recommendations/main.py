@@ -153,10 +153,11 @@ def add_movie(request: NewItemsEvent):
     # suffix = time.strftime("%H_%M_%S", time.localtime())
     # suffix = round(time.time() * 1e6)
     batch += 1
-    filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath,'w') as f:
-        json.dump(request.model_dump(), f)
+    if phase > 0: 
+        filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath,'w') as f:
+            json.dump(request.model_dump(), f)
 
     n = len(movie_mapping)
     movie_mapping.update(
@@ -252,9 +253,13 @@ def get_recs(user_id: str):
 def _get_thompson_top(k: int) -> List[int]:  
     try: 
         bandit_state = redis_connection.json().get('bandit_state')
+        if type(bandit_state) == str:
+            logger.warning('Bandit state type is str')
+            bandit_state = json.loads(bandit_state)
     except redis.exceptions.ConnectionError:
         logger.exception(f'Exception while Redis connecting: Conncection fail while retrieve current thompson bandit state')
     if bandit_state is None: 
+        logger.warning('!!!!... Bandit state is empty!!! Default settings for bandit are used!')
         local_bandit = create_bandit_instance(n_arms=len(movie_mapping), **bandit_params)
         redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     else: 
@@ -278,6 +283,7 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
 
     rec_indices = [s.id for s in closest_points if movie_inv_mapping[s.id] not in user_history and s.score > min_score]
     if len(rec_indices) == 0:
+        logger.warning('No one personal recommendation has been retrieved!')
         return []
     elif len(rec_indices) == 1: 
         return [movie_inv_mapping[rec_indices[0]]]
