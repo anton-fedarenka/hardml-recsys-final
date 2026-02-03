@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from qdrant_client import QdrantClient
 from sklearn.preprocessing import normalize
 from loguru import logger
-import mlflow
+# import mlflow
 
 from models import InteractEvent, RecommendationsResponse, NewItemsEvent
 from bandit import ThompsonSamplingBandit, create_bandit_instance
@@ -23,8 +23,8 @@ app = FastAPI()
 
 # --------- Docker settings: ----------------
 redis_connection = redis.Redis('redis')
-qdrant_connection = QdrantClient("qdrant", port=6333)
-mlflow.set_tracking_uri("http://mlflow-server:8080")
+# qdrant_connection = QdrantClient("qdrant", port=6333)
+# mlflow.set_tracking_uri("http://mlflow-server:8080")
 logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=False)
 # -------------------------------------------
 
@@ -33,6 +33,7 @@ logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=F
 # qdrant_connection = QdrantClient("localhost", port=6333)
 # logger.add('./logs/recommendations.log',enqueue=True, backtrace=False, colorize=True)
 # -------------------------------------------
+sys.tracebacklimit = 4
 
 unique_item_ids = set()
 movie_mapping = {}
@@ -48,22 +49,34 @@ top_response_td = []
 
 EPSILON = 0.05
 TOP_K = 10
-diversity_coeff = 0.4
-
+N_recs = 100
+calc_diversity_flag = True
+divers_coeff = 0.1
 bandit_params  = {
     'alpha_weight': 1,
-    'beta_weight': 4 
+    'beta_weight': 100 
 }
-redis_connection.json().set('bandit_params','.',bandit_params)
+
+run_params = {
+    'TOP_K': TOP_K,
+    'N_recs': N_recs,
+    'calc_diversity_flag': calc_diversity_flag,
+    'divers_coeff': divers_coeff,
+    'bandit_params': bandit_params
+}
+with open('data/run_params.json', 'w') as f: 
+    json.dump(run_params, f)
 
 phase = 0
 batch = 0
 
-sys.tracebacklimit = 4
 # mlflow_experiment_id = mlflow.create_experiment('experiment_1')
-with mlflow.start_run() as run:
-    mlflow_run_id = run.info.run_id
-    # redis_connection.json().set('mlflow_run_id','.',mlflow_run_id)
+# with mlflow.start_run() as run:
+#     mlflow_run_id = run.info.run_id
+#     mlflow.log_params(bandit_params)
+#     mlflow.log_param('N_recs', N_recs)
+#     mlflow.log_param('calc_diversity_flag', calc_diversity_flag)
+#     mlflow.log_param('divers_coeff', divers_coeff)
 
 
 @app.get('/healthcheck')
@@ -85,8 +98,8 @@ def cleanup():
 
     logger.warning("Cleaning procedure has been called!..")
 
-    if phase > 0:
-        calc_metrics()
+    # if phase > 0:
+    #     calc_metrics()
     
     phase += 1
     batch = 0
@@ -96,15 +109,8 @@ def cleanup():
     movie_mapping = {}
     movie_inv_mapping = {}
     try:
-        # redis_connection.delete('*')
-        # redis_connection.json().delete('*')
-        # redis_connection.flushall()
-        # redis_connection.json().delete('thompson_top')
-        # redis_connection.json().delete('movie_ids_mapping')
-        # redis_connection.json().delete('bandit_state')
-        # redis_connection.json().delete('user_mapping')
         redis_connection.flushdb() # Delete all keys from redis
-        # redis_connection.json().set('clear','.', True)
+        redis_connection.set('clear', 1)
     except redis.exceptions.ConnectionError:
         logger.exception("Redis connection failure while cleaning.")
 
@@ -144,19 +150,12 @@ def add_movie(request: NewItemsEvent):
 
     logger.warning("Add new data")
 
-    # Treat request as dataframe and drop duplicates items. 
-    # This part did not test
-    # df = pd.DataFrame(request.model_dump())
-    # df.drop_duplicates(inplace=True)
-
-    # Write down the added items to the file for further testing
-    # suffix = time.strftime("%H_%M_%S", time.localtime())
-    # suffix = round(time.time() * 1e6)
     batch += 1
-    filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath,'w') as f:
-        json.dump(request.model_dump(), f)
+    if phase > 0: 
+        filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath,'w') as f:
+            json.dump(request.model_dump(), f)
 
     n = len(movie_mapping)
     movie_mapping.update(
@@ -166,7 +165,6 @@ def add_movie(request: NewItemsEvent):
         {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
         )
     redis_connection.json().set('movie_mapping','.',movie_mapping)
-    redis_connection.json().set('movie_inv_mapping','.',movie_inv_mapping)
 
     for item_id in request.item_ids:
         unique_item_ids.add(item_id)
@@ -185,46 +183,70 @@ def get_recs(user_id: str):
     global pers_response_td
 
     item_ids = []
-    user_mapping = redis_connection.json().get('user_mapping')
+    # user_mapping = redis_connection.json().get('user_mapping')
     t_response_start = time.time()
 
     # history = redis_connection.json().get(f'user_history_{user_id}') or []
     history = rec_history.get(user_id, [])
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
-    if user_mapping and user_id in user_mapping:
-        pers_t_start = time.time()
-        logger.info(f"Retriving personal recommentdations for user {user_id}")
-        try: 
-            item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
-        except Exception as e:
-            logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
-            item_ids = []            
-        pers_response_td.append(time.time() - pers_t_start)
+    try:
+        personal_items = redis_connection.json().get(f'recs_user_{user_id}')
+        top_items = redis_connection.json().get(f'thompson_top')
+    except redis.exceptions.ConnectionError:
+        print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
-    if len(item_ids) < TOP_K:
-        logger.info(f"Getting thompson top for user {user_id}")
-        # try:
-        #     top_items = redis_connection.json().get('thompson_top')
-        #     item_ids.extend(top_items)
-        # except redis.exceptions.ConnectionError:
-        #     print(f'Exception while Redis connecting: Conncection fail while retrieve thompson top recommendations for user {user_id}')
-        # if len(history) > 0: 
-        #     item_ids = [item for item in item_ids if item not in history]
-        top_t_start = time.time()
-        try:
-            top_indeces = _get_thompson_top(TOP_K + len(history))
-            top_items = [movie_inv_mapping[item] for item in top_indeces if item not in history]
-            item_ids.extend(top_items)
-        except Exception as e: 
-            logger.exception(f'Fail to get thompson top for user {user_id}. Exception: {e}')
-        top_response_td.append(time.time() - top_t_start)
+    if personal_items is None: 
+        personal_items = [] #if personal_items is None else personal_items
+        logger.info(f'Personal item is empty for user {user_id}')
+    else:
+        logger.info(f'N_pers = {len(personal_items)} pesonal items are retrieved for user {user_id}')
+    
+    if top_items is None: 
+        top_items = [] # if top_items is None else top_items
+        logger.info(f'Thompson top item is empty for user {user_id}')
+    else:
+        logger.info(f'N_top = {len(top_items)} top items are retrieved for user {user_id}')
+
+    item_ids = [item for item in personal_items + top_items if item not in history]
+
+    # if user_mapping and user_id in user_mapping:
+    #     pers_t_start = time.time()
+    #     logger.info(f"Retriving personal recommentdations for user {user_id}")
+    #     try: 
+    #         # item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
+    #         item_ids = redis_connection.json().get(f'recs_user_{user_id}')
+    #         logger.info(f'Retrieved {len(item_ids)} personal recommendations for user {user_id}')
+    #     except Exception as e:
+    #         logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
+    #         item_ids = []            
+    #     pers_response_td.append(time.time() - pers_t_start)
+
+    # if len(item_ids) < TOP_K:
+    #     logger.info(f"Getting thompson top for user {user_id}")
+    #     top_t_start = time.time()
+    #     try:
+    #         top_items = redis_connection.json().get('thompson_top')
+    #     except redis.exceptions.ConnectionError:
+    #         print(f'Exception while Redis connecting: Conncection fail while retrieve thompson top recommendations for user {user_id}')
+    #     if top_items is not None:
+    #         item_ids.extend(top_items)
+        
+    #     if len(history) > 0: 
+    #         item_ids = [item for item in item_ids if item not in history]
+    #     # try:
+    #     #     top_indeces = _get_thompson_top(TOP_K + len(history))
+    #     #     top_items = [movie_inv_mapping[item] for item in top_indeces if item not in history]
+    #     #     item_ids.extend(top_items)
+    #     # except Exception as e: 
+    #     #     logger.exception(f'Fail to get thompson top for user {user_id}. Exception: {e}')
+    #     top_response_td.append(time.time() - top_t_start)
         
     if len(item_ids) < TOP_K: # or random.random() < EPSILON:
-        logger.warning(f"Fail to get any precalculated recommendations for user {user_id}! Random choice...")
+        logger.warning(f"Fail to get enough precalculated recommendations for user {user_id}; number of the items retrieved: {len(item_ids)}! Random choice...")
         item_ids += [
             item for item in 
-            np.random.choice(list(unique_item_ids), size=20, replace=False).tolist()
+            np.random.choice(list(unique_item_ids), size=TOP_K + len(history), replace=False).tolist()
             if item not in history
         ]
 
@@ -252,9 +274,13 @@ def get_recs(user_id: str):
 def _get_thompson_top(k: int) -> List[int]:  
     try: 
         bandit_state = redis_connection.json().get('bandit_state')
+        if type(bandit_state) == str:
+            logger.warning('Bandit state type is str')
+            bandit_state = json.loads(bandit_state)
     except redis.exceptions.ConnectionError:
         logger.exception(f'Exception while Redis connecting: Conncection fail while retrieve current thompson bandit state')
     if bandit_state is None: 
+        logger.warning('!!!!... Bandit state is empty!!! Default settings for bandit are used!')
         local_bandit = create_bandit_instance(n_arms=len(movie_mapping), **bandit_params)
         redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     else: 
@@ -278,6 +304,7 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
 
     rec_indices = [s.id for s in closest_points if movie_inv_mapping[s.id] not in user_history and s.score > min_score]
     if len(rec_indices) == 0:
+        logger.warning('No one personal recommendation has been retrieved!')
         return []
     elif len(rec_indices) == 1: 
         return [movie_inv_mapping[rec_indices[0]]]
@@ -433,8 +460,8 @@ def calc_metrics():
         logger.warning(f'Unable to log metrics in mlflow: {metrics}')
         return # 200
 
-    with mlflow.start_run(run_id=mlflow_run_id) as run:
-        mlflow.log_metrics(metrics)
-        # mlflow.log_metric('calc_metric_time', time.time() - t_start)
+    # with mlflow.start_run(run_id=mlflow_run_id) as run:
+    #     mlflow.log_metrics(metrics)
+    #     # mlflow.log_metric('calc_metric_time', time.time() - t_start)
 
     return # 200
