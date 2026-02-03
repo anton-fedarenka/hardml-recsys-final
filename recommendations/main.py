@@ -114,10 +114,10 @@ def cleanup():
     except redis.exceptions.ConnectionError:
         logger.exception("Redis connection failure while cleaning.")
 
-    try:
-        qdrant_connection.delete_collection(collection_name="movie_embs")
-    except Exception as e: 
-        logger.exception(f'Exception occurs when qdrant collection deleting: {e}')
+    # try:
+    #     qdrant_connection.delete_collection(collection_name="movie_embs")
+    # except Exception as e: 
+    #     logger.exception(f'Exception occurs when qdrant collection deleting: {e}')
 
     try: 
         if df_rec_history is not None: 
@@ -137,7 +137,7 @@ def cleanup():
         #suffix = time.strftime("%H_%M_%S", time.localtime())
         os.rename('./data/interactions.csv', f'./data/interactions_ph_{phase}.csv')
 
-    logger.warning('>>> Cleaned up! <<<')
+    logger.warning('>>> !Cleaned UP! <<<')
     return 200
 
 
