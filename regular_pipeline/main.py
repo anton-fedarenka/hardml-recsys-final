@@ -153,7 +153,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 5:
+                    if time.time() - t_start > 0.0000001:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -338,7 +338,7 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
-        train_matrix_factorization(),
+        # train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()
     )

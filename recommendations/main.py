@@ -191,16 +191,16 @@ def get_recs(user_id: str):
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
     try:
-        personal_items = redis_connection.json().get(f'recs_user_{user_id}')
+        # personal_items = redis_connection.json().get(f'recs_user_{user_id}')
         top_items = redis_connection.json().get(f'thompson_top')
     except redis.exceptions.ConnectionError:
         print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
-    if personal_items is None: 
-        personal_items = [] #if personal_items is None else personal_items
-        logger.info(f'Personal item is empty for user {user_id}')
-    else:
-        logger.info(f'N_pers = {len(personal_items)} pesonal items are retrieved for user {user_id}')
+    # if personal_items is None: 
+    #     personal_items = [] #if personal_items is None else personal_items
+    #     logger.info(f'Personal item is empty for user {user_id}')
+    # else:
+    #     logger.info(f'N_pers = {len(personal_items)} pesonal items are retrieved for user {user_id}')
     
     if top_items is None: 
         top_items = [] # if top_items is None else top_items
@@ -208,7 +208,8 @@ def get_recs(user_id: str):
     else:
         logger.info(f'N_top = {len(top_items)} top items are retrieved for user {user_id}')
 
-    item_ids = [item for item in personal_items + top_items if item not in history]
+    # item_ids = [item for item in personal_items + top_items if item not in history]
+    item_ids = [item for item in top_items if item not in history]
 
     # if user_mapping and user_id in user_mapping:
     #     pers_t_start = time.time()
@@ -254,10 +255,10 @@ def get_recs(user_id: str):
     history.extend(item_ids)
     rec_history[user_id] = history
 
-    try:
-        df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
-    except Exception: 
-        logger.exception("Exception while df_rec_history dataframe updating")
+    # try:
+    #     df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
+    # except Exception: 
+    #     logger.exception("Exception while df_rec_history dataframe updating")
 
     # print(f'df_rec_history = {df_rec_history}')
     # print(f'df_hist_diversity = {df_hist_diversity}')
@@ -265,7 +266,7 @@ def get_recs(user_id: str):
     # suffix = time.strftime("%H_%M_%S", time.localtime())
     # df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
     
-    response_td.append(time.time() - t_response_start)
+    # response_td.append(time.time() - t_response_start)
 
     return RecommendationsResponse(item_ids=item_ids)
 
