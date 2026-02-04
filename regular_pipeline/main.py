@@ -111,11 +111,34 @@ def _update_bandit(data: pl.DataFrame) -> None:
         local_bandit.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
 
     logger.info('calculating top recommendations')
-    top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
-    top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    redis_connection.json().set('thompson_top', '.', top_item_ids)
+    # top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
+    # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
+    top_items = _random_top_bunch(n_bunch=100)
+    redis_connection.json().set('thompson_top', '.', top_items)
+    redis_connection.set('top_updated', 1)
+    logger.info('--->> Bandit updated. Thompson items updated! <<---')
     # redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     return 
+
+
+@logger.catch
+def _random_top_bunch(n_bunch: int):
+    tops = []
+    for _ in range(n_bunch):
+        top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
+        top_item_ids = [movie_inv_mapping[i] for i in top_inds]
+        tops.append(top_item_ids)
+    return tops
+
+
+async def update_top_recomendations():
+    while True:
+        if local_bandit is not None:
+            top_items = _random_top_bunch(n_bunch=100)
+            redis_connection.json().set('thompson_top', '.', top_items)
+            redis_connection.set('top_updated', 1)
+            logger.info('---> Top items updated <---')
+        await asyncio.sleep(5)
 
 
 
@@ -153,7 +176,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 0.0000001:
+                    if time.time() - t_start > 1:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -194,7 +217,7 @@ async def train_matrix_factorization(algo: str = 'ALS'):
                 else:
                     sleep_dt = 5
                     logger.warning(f'!!! >>> Data updating is failed <<< !!! Sleeping for {sleep_dt} dt')
-                    asyncio.sleep(sleep_dt)
+                    await asyncio.sleep(sleep_dt)
                     continue
             
             df = (
@@ -226,11 +249,11 @@ async def train_matrix_factorization(algo: str = 'ALS'):
 
             if algo == 'BPR':
                 model = implicit.bpr.BayesianPersonalizedRanking(
-                    random_state=42,
+                    random_state=None,
                 )
             elif algo == 'ALS':
                 model = implicit.als.AlternatingLeastSquares(
-                    random_state=42
+                    random_state=None
                 )
             else:
                 logger.exception(f'Algorith of matrix factorization is not defined! Function exit')
@@ -289,10 +312,11 @@ async def calculate_top_recommendations():
         clear = int(clear) if clear is not None else 1
         if clear:
             # Updating thompson sampling bandit if clean process is triggered
-            if not _update_data(): 
-                asyncio.sleep(5)
+            if _update_data(): 
+                redis_connection.set('clear',0)
+            else:
+                await asyncio.sleep(5)
                 continue
-            redis_connection.set('clear',0)
             
             if os.path.exists('./data/interactions.csv'):
                 interactions = pl.read_csv('./data/interactions.csv')
@@ -338,6 +362,7 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
+        update_top_recomendations(),
         # train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()

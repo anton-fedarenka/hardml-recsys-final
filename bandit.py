@@ -9,7 +9,7 @@ class ThompsonSamplingBandit():
     alpha_weight: float = 1.
     beta_weight: float = 1.
         
-    def sample(self, rng_seed: int = 44) -> int:
+    def sample(self, rng_seed: int = None) -> int:
         rng = np.random.default_rng(rng_seed)
         return np.argmax(
             rng.beta(
@@ -18,7 +18,7 @@ class ThompsonSamplingBandit():
             )
         )
 
-    def get_top_indices(self, k: int = 10, rng_seed: int = 44) -> List[int]:
+    def get_top_indices(self, k: int = 10, rng_seed: int = None) -> List[int]:
         rng = np.random.default_rng(rng_seed)
         beta_distr_array = rng.beta(
             self.alpha_weight * np.array(self.alpha), 

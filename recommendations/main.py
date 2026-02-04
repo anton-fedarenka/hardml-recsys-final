@@ -47,6 +47,8 @@ response_td = []
 pers_response_td = []
 top_response_td = []
 
+tops = []
+
 EPSILON = 0.05
 TOP_K = 10
 N_recs = 100
@@ -165,6 +167,7 @@ def add_movie(request: NewItemsEvent):
         {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
         )
     redis_connection.json().set('movie_mapping','.',movie_mapping)
+    redis_connection.set('top_updated', 0)
 
     for item_id in request.item_ids:
         unique_item_ids.add(item_id)
@@ -181,6 +184,7 @@ def get_recs(user_id: str):
     global response_td
     global top_response_td
     global pers_response_td
+    global tops
 
     item_ids = []
     # user_mapping = redis_connection.json().get('user_mapping')
@@ -190,11 +194,28 @@ def get_recs(user_id: str):
     history = rec_history.get(user_id, [])
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
-    try:
-        # personal_items = redis_connection.json().get(f'recs_user_{user_id}')
-        top_items = redis_connection.json().get(f'thompson_top')
-    except redis.exceptions.ConnectionError:
-        print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+    # try:
+    #     # personal_items = redis_connection.json().get(f'recs_user_{user_id}')
+    #     top_items = redis_connection.json().get(f'thompson_top')
+    # except redis.exceptions.ConnectionError:
+    #     print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+
+    top_updated = int(redis_connection.get('top_updated'))
+    if top_updated:
+        logger.info(f'Rest of top bunches = {len(tops)}')
+        try:
+            tops = redis_connection.json().get('thompson_top')
+            redis_connection.set('top_updated', 0)
+        except redis.exceptions.ConnectionError:
+            print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
+
+    if len(tops) > 0:
+        top_items = tops.pop()
+        item_ids = [item for item in top_items if item not in history]
+    else:
+        top_items = []
+        logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY OR EXHAUSTED !!! >>>>>>>>>>')
+        logger.info(f'Thompson top item is empty for user {user_id}')
 
     # if personal_items is None: 
     #     personal_items = [] #if personal_items is None else personal_items
@@ -202,14 +223,13 @@ def get_recs(user_id: str):
     # else:
     #     logger.info(f'N_pers = {len(personal_items)} pesonal items are retrieved for user {user_id}')
     
-    if top_items is None: 
-        top_items = [] # if top_items is None else top_items
-        logger.info(f'Thompson top item is empty for user {user_id}')
-    else:
-        logger.info(f'N_top = {len(top_items)} top items are retrieved for user {user_id}')
+    # if top_items is None: 
+    #     top_items = [] # if top_items is None else top_items
+    #     logger.info(f'Thompson top item is empty for user {user_id}')
+    # else:
+    #     logger.info(f'N_top = {len(top_items)} top items are retrieved for user {user_id}')
 
     # item_ids = [item for item in personal_items + top_items if item not in history]
-    item_ids = [item for item in top_items if item not in history]
 
     # if user_mapping and user_id in user_mapping:
     #     pers_t_start = time.time()
@@ -245,11 +265,9 @@ def get_recs(user_id: str):
         
     if len(item_ids) < TOP_K: # or random.random() < EPSILON:
         logger.warning(f"Fail to get enough precalculated recommendations for user {user_id}; number of the items retrieved: {len(item_ids)}! Random choice...")
-        item_ids += [
-            item for item in 
-            np.random.choice(list(unique_item_ids), size=TOP_K + len(history), replace=False).tolist()
-            if item not in history
-        ]
+        rng = np.random.default_rng()
+        random_recs = rng.choice(list(unique_item_ids), size=TOP_K + len(history), replace=False).tolist()
+        item_ids += [item for item in random_recs if item not in history]
 
     item_ids = item_ids[:TOP_K]
     history.extend(item_ids)
