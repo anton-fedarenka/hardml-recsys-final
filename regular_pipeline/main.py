@@ -113,7 +113,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
     logger.info('calculating top recommendations')
     # top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    top_items = _random_top_bunch(n_bunch=100)
+    top_items = _random_top_bunch()
     redis_connection.json().set('thompson_top', '.', top_items)
     redis_connection.set('top_updated', 1)
     logger.info('--->> Bandit updated. Thompson items updated! <<---')
@@ -122,7 +122,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
 
 
 @logger.catch
-def _random_top_bunch(n_bunch: int):
+def _random_top_bunch(n_bunch: int = 1000):
     tops = []
     for _ in range(n_bunch):
         top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
@@ -134,7 +134,7 @@ def _random_top_bunch(n_bunch: int):
 async def update_top_recomendations():
     while True:
         if local_bandit is not None:
-            top_items = _random_top_bunch(n_bunch=100)
+            top_items = _random_top_bunch()
             redis_connection.json().set('thompson_top', '.', top_items)
             redis_connection.set('top_updated', 1)
             logger.info('---> Top items updated <---')

@@ -212,6 +212,7 @@ def get_recs(user_id: str):
     if len(tops) > 0:
         top_items = tops.pop()
         item_ids = [item for item in top_items if item not in history]
+        logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
         top_items = []
         logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY OR EXHAUSTED !!! >>>>>>>>>>')
