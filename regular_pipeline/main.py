@@ -111,15 +111,15 @@ def _update_bandit(data: pl.DataFrame) -> None:
     for item_id, action, num in data_likes.rows():
         local_bandit.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
     
-    logger.info('--- Bandit updated! ---')
+    # logger.info('--- Bandit updated! ---')
 
     # logger.info('calculating top recommendations')
-    # top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
+    # top= local_bandit.get_top_indices(k=TOP_K + 20)
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    # top_items = _random_top_bunch()
-    # redis_connection.json().set('thompson_top', '.', top_items)
+    top_items = _random_top_bunch(top_k=TOP_K +20)
+    redis_connection.json().set('thompson_top', '.', top_items)
     # redis_connection.set('top_updated', 1)
-    # logger.info('--->> Bandit updated. Thompson items updated! <<---')
+    logger.info('--->> Bandit updated. Thompson items updated! <<---')
     # redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     return 
 
@@ -178,7 +178,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 0.1:
+                    if time.time() - t_start > 0.05:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -364,7 +364,7 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
-        update_top_recomendations(),
+        # update_top_recomendations(),
         # train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()
