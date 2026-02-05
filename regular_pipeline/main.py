@@ -116,7 +116,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
     # logger.info('calculating top recommendations')
     # top= local_bandit.get_top_indices(k=TOP_K + 20)
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    top_items = _random_top_bunch(top_k = TOP_K + 20)
+    top_items = _random_top_bunch_serial(top_k = TOP_K + 20)
     redis_connection.json().set('thompson_top', '.', top_items)
     # redis_connection.set('top_updated', 1)
     logger.info('--->> Bandit updated. Thompson items updated! <<---')
@@ -125,10 +125,19 @@ def _update_bandit(data: pl.DataFrame) -> None:
 
 
 @logger.catch
-def _random_top_bunch(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
+def _random_top_bunch_parallel(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
     top_inds = local_bandit.get_top_indices(top_k=top_k, n_bunch=n_bunch)
     tops = [[movie_inv_mapping[i] for i in sub] for sub in top_inds]
     # tops = np.vectorize(movie_inv_mapping.get)(top_inds).tolist()
+    return tops
+
+@logger.catch
+def _random_top_bunch_serial(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
+    tops = []
+    for _ in range(n_bunch):
+        top_inds = local_bandit.get_top_indices(top_k=top_k, n_bunch=1)
+        top_item_ids = [movie_inv_mapping[i] for i in top_inds[0]]
+        tops.append(top_item_ids)
     return tops
 
 
