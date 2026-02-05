@@ -25,7 +25,7 @@ class ThompsonSamplingBandit():
             self.beta_weight * np.array(self.beta),
             size=(n_bunch, len(self.alpha))
         )
-        top_n_inds = np.argpartition(beta_distr_array, -k)[:, -k:]
+        top_n_inds = np.argpartition(beta_distr_array, -top_k)[:, -top_k:]
         top_n_vals = np.take_along_axis(beta_distr_array, top_n_inds, axis=1)
         return np.take_along_axis(top_n_inds, np.argsort(top_n_vals)[:,::-1], axis=1).tolist() 
     
