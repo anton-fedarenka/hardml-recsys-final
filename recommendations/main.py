@@ -48,7 +48,6 @@ pers_response_td = []
 top_response_td = []
 
 tops = []
-top_counter = 0
 
 EPSILON = 0.05
 TOP_K = 10
@@ -188,11 +187,9 @@ def get_recs(user_id: str):
     global top_response_td
     global pers_response_td
     global tops
-    global top_counter
 
     item_ids = []
     # user_mapping = redis_connection.json().get('user_mapping')
-    t_response_start = time.time()
 
     # history = redis_connection.json().get(f'user_history_{user_id}') or []
     history = rec_history.get(user_id, [])
@@ -215,7 +212,8 @@ def get_recs(user_id: str):
 
     if len(tops) == 0: 
         tops = redis_connection.json().get('thompson_top')
-        tops = tops if tops is not None else []            
+        if tops is None:
+            tops = []            
     
     if len(tops) > 0:
         top_items = tops.pop()
@@ -223,7 +221,7 @@ def get_recs(user_id: str):
         logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
         # top_items = []
-        logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
+        # logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
         logger.info(f'Thompson top item is empty for user {user_id}')
 
     # if personal_items is None: 
