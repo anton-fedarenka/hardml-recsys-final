@@ -140,7 +140,7 @@ async def update_top_recomendations():
             redis_connection.json().set('thompson_top','.', top_items)
             redis_connection.set('top_updated', 1)
             logger.info('---> Top items updated <---')
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
 
 
 
@@ -178,7 +178,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 0.05:
+                    if time.time() - t_start > 0.1:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
