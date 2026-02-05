@@ -48,6 +48,7 @@ pers_response_td = []
 top_response_td = []
 
 tops = []
+top_counter = 0
 
 EPSILON = 0.05
 TOP_K = 10
@@ -58,13 +59,15 @@ bandit_params  = {
     'alpha_weight': 1,
     'beta_weight': 100 
 }
+top_bunch_num = 100
 
 run_params = {
     'TOP_K': TOP_K,
     'N_recs': N_recs,
     'calc_diversity_flag': calc_diversity_flag,
     'divers_coeff': divers_coeff,
-    'bandit_params': bandit_params
+    'bandit_params': bandit_params,
+    'top_bunch_num': top_bunch_num
 }
 with open('data/run_params.json', 'w') as f: 
     json.dump(run_params, f)
@@ -185,6 +188,7 @@ def get_recs(user_id: str):
     global top_response_td
     global pers_response_td
     global tops
+    global top_counter
 
     item_ids = []
     # user_mapping = redis_connection.json().get('user_mapping')
@@ -200,22 +204,26 @@ def get_recs(user_id: str):
     # except redis.exceptions.ConnectionError:
     #     print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
-    top_updated = int(redis_connection.get('top_updated'))
-    if top_updated:
-        logger.info(f'Rest of top bunches = {len(tops)}')
-        try:
-            tops = redis_connection.json().get('thompson_top')
-            redis_connection.set('top_updated', 0)
-        except redis.exceptions.ConnectionError:
-            print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
+    # top_updated = int(redis_connection.get('top_updated'))
+    # if top_updated:
+    #     logger.info(f'Rest of top bunches = {len(tops)}')
+    #     try:
+    #         tops = redis_connection.json().get('thompson_top')
+    #         redis_connection.set('top_updated', 0)
+    #     except redis.exceptions.ConnectionError:
+    #         print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
 
+    if len(tops) == 0: 
+        tops = redis_connection.json().get('thompson_top')
+        tops = tops if tops is not None else []            
+    
     if len(tops) > 0:
         top_items = tops.pop()
         item_ids = [item for item in top_items if item not in history]
         logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
-        top_items = []
-        logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY OR EXHAUSTED !!! >>>>>>>>>>')
+        # top_items = []
+        logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
         logger.info(f'Thompson top item is empty for user {user_id}')
 
     # if personal_items is None: 

@@ -57,6 +57,7 @@ N_recs = params['N_recs']
 calc_diversity_flag = params['calc_diversity_flag']
 divers_coeff = params['divers_coeff']
 bandit_params = params['bandit_params']
+top_bunch_num = parms['top_bunch_num']
 
 
 @logger.catch
@@ -109,36 +110,37 @@ def _update_bandit(data: pl.DataFrame) -> None:
 
     for item_id, action, num in data_likes.rows():
         local_bandit.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
+    
+    logger.info('--- Bandit updated! ---')
 
-    logger.info('calculating top recommendations')
+    # logger.info('calculating top recommendations')
     # top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    top_items = _random_top_bunch()
-    redis_connection.json().set('thompson_top', '.', top_items)
-    redis_connection.set('top_updated', 1)
-    logger.info('--->> Bandit updated. Thompson items updated! <<---')
+    # top_items = _random_top_bunch()
+    # redis_connection.json().set('thompson_top', '.', top_items)
+    # redis_connection.set('top_updated', 1)
+    # logger.info('--->> Bandit updated. Thompson items updated! <<---')
     # redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     return 
 
 
 @logger.catch
-def _random_top_bunch(n_bunch: int = 1000):
-    tops = []
-    for _ in range(n_bunch):
-        top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
-        top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-        tops.append(top_item_ids)
+def _random_top_bunch(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
+    top_inds = local_bandit.get_top_indices(k=TOP_K + 20, n_bunch=n_bunch)
+    tops = [[movie_inv_mapping[i] for i in sub] for sub in top_inds]
+    # tops = np.vectorize(movie_inv_mapping.get)(top_inds).tolist()
     return tops
 
 
 async def update_top_recomendations():
     while True:
         if local_bandit is not None:
-            top_items = _random_top_bunch()
-            redis_connection.json().set('thompson_top', '.', top_items)
+            top_items = _random_top_bunch(top_k=TOP_K + 20)
+            # redis_connection.json().set('thompson_top', '.', top_items)
+            redis_connection.set('thompson_top', json.dump(top_items))
             redis_connection.set('top_updated', 1)
             logger.info('---> Top items updated <---')
-        await asyncio.sleep(5)
+        await asyncio.sleep(0.05)
 
 
 
@@ -176,7 +178,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 1:
+                    if time.time() - t_start > 0.05:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({

@@ -18,15 +18,16 @@ class ThompsonSamplingBandit():
             )
         )
 
-    def get_top_indices(self, k: int = 10, rng_seed: int = None) -> List[int]:
+    def get_top_indices(self, top_k: int = 10, n_bunch: int = 50, rng_seed: int = None) -> List[int]:
         rng = np.random.default_rng(rng_seed)
         beta_distr_array = rng.beta(
             self.alpha_weight * np.array(self.alpha), 
-            self.beta_weight * np.array(self.beta)
+            self.beta_weight * np.array(self.beta),
+            size=(n_bunch, len(self.alpha))
         )
-        top_n_inds = np.argpartition(beta_distr_array, -k)[-k:]
-        top_n_vals = beta_distr_array[top_n_inds]
-        return top_n_inds[np.argsort(top_n_vals)[::-1]].tolist() 
+        top_n_inds = np.argpartition(beta_distr_array, -k)[:, -k:]
+        top_n_vals = np.take_along_axis(beta_distr_array, top_n_inds, axis=1)
+        return np.take_along_axis(top_n_inds, np.argsort(top_n_vals)[:,::-1], axis=1).tolist() 
     
     def retrieve_reward(self, arm_ind: int, action: str, n: int) -> None:
         if action == 'like':
