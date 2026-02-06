@@ -188,7 +188,7 @@ def get_recs(user_id: str):
 
     item_ids = []
     # user_mapping = redis_connection.json().get('user_mapping')
-    t_response_start = time.time()
+    # t_response_start = time.time()
 
     # history = redis_connection.json().get(f'user_history_{user_id}') or []
     history = rec_history.get(user_id, [])
@@ -200,23 +200,28 @@ def get_recs(user_id: str):
     # except redis.exceptions.ConnectionError:
     #     print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
-    top_updated = int(redis_connection.get('top_updated'))
-    if top_updated:
-        logger.info(f'Rest of top bunches = {len(tops)}')
-        try:
-            tops = redis_connection.json().get('thompson_top')
-            redis_connection.set('top_updated', 0)
-        except redis.exceptions.ConnectionError:
-            print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
+    # top_updated = int(redis_connection.get('top_updated'))
+    # if top_updated:
+    #     logger.info(f'Rest of top bunches = {len(tops)}')
+    #     try:
+    #         tops = redis_connection.json().get('thompson_top')
+    #         redis_connection.set('top_updated', 0)
+    #     except redis.exceptions.ConnectionError:
+    #         print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
 
+    if len(tops) == 0: 
+        tops = redis_connection.json().get('thompson_top')
+        if tops is None:
+            tops = []            
+    
     if len(tops) > 0:
         top_items = tops.pop()
         item_ids = [item for item in top_items if item not in history]
         logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
-        top_items = []
-        logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY OR EXHAUSTED !!! >>>>>>>>>>')
         logger.info(f'Thompson top item is empty for user {user_id}')
+
+
 
     # if personal_items is None: 
     #     personal_items = [] #if personal_items is None else personal_items

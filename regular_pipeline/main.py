@@ -122,7 +122,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
 
 
 @logger.catch
-def _random_top_bunch(n_bunch: int = 1000):
+def _random_top_bunch(n_bunch: int = 100):
     tops = []
     for _ in range(n_bunch):
         top_inds = local_bandit.get_top_indices(k=TOP_K + 20)
@@ -362,7 +362,7 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
-        update_top_recomendations(),
+        # update_top_recomendations(),
         # train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()

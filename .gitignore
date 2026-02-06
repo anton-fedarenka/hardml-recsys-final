@@ -13,3 +13,5 @@ requirements_old.txt
 *.log
 mlflow*
 *mlruns
+*.swp
+*.swo
