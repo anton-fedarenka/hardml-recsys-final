@@ -5,6 +5,7 @@ import sys
 import time
 import json
 from dataclasses import asdict
+from collections import deque
 
 import numpy as np
 import polars as pl
@@ -56,7 +57,7 @@ calc_diversity_flag = True
 divers_coeff = 0.1
 bandit_params  = {
     'alpha_weight': 1,
-    'beta_weight': 100 
+    'beta_weight': 1000 
 }
 top_bunch_num = 100
 
@@ -201,24 +202,19 @@ def get_recs(user_id: str):
     # except redis.exceptions.ConnectionError:
     #     print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
-    # top_updated = int(redis_connection.get('top_updated'))
-    # if top_updated:
-    #     logger.info(f'Rest of top bunches = {len(tops)}')
-    #     try:
-    #         tops = redis_connection.json().get('thompson_top')
-    #         redis_connection.set('top_updated', 0)
-    #     except redis.exceptions.ConnectionError:
-    #         print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
-
-    if len(tops) == 0: 
-        tops = redis_connection.json().get('thompson_top')
-        if tops is None:
-            tops = []            
+    top_updated = int(redis_connection.get('top_updated'))
+    if top_updated:
+        try:
+            tops = deque(redis_connection.json().get('thompson_top'))
+            redis_connection.set('top_updated', 0)
+        except redis.exceptions.ConnectionError:
+            print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
     
     if len(tops) > 0:
-        top_items = tops.pop()
+        top_items = tops[0]
+        tops.rotate(1)
         item_ids = [item for item in top_items if item not in history]
-        logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
+        # logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
         # top_items = []
         # logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
