@@ -118,7 +118,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
     top_items = _random_top_bunch_serial(top_k = TOP_K + 20)
     redis_connection.json().set('thompson_top', '.', top_items)
-    # redis_connection.set('top_updated', 1)
+    redis_connection.set('top_updated', 1)
     logger.info('--->> Bandit updated. Thompson items updated! <<---')
     # redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
     return 
