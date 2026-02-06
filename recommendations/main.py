@@ -52,14 +52,14 @@ tops = []
 
 EPSILON = 0.05
 TOP_K = 10
-N_recs = 100
-calc_diversity_flag = True
-divers_coeff = 0.1
+N_recs = TOP_K + 20 # Number of items extracted  
+calc_diversity_flag = False # Calculate diversity between elements or not
+divers_coeff = 0.1 # Coefficient of the diversity scalling when adding to the final score
 bandit_params  = {
     'alpha_weight': 1,
     'beta_weight': 1000 
 }
-top_bunch_num = 100
+top_bunch_num = 100 # Number of different samples from current bandit state
 
 run_params = {
     'TOP_K': TOP_K,

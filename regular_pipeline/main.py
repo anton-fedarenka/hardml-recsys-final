@@ -187,7 +187,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 0.1:
+                    if time.time() - t_start > 0.05:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -301,7 +301,7 @@ async def train_matrix_factorization(algo: str = 'ALS'):
                 user_num = user_mapping[user_id]
                 positive_recs = rec_indeces[user_num][rec_scores[user_num] > 0]
                 recs = [movie_inv_mapping[i] for i in positive_recs]
-                redis_connection.json().set(f'recs_user_{user_id}','.',recs)
+                redis_connection.json().set(f'recs_user_{user_id}','.',recs[:TOP_K + 20])
 
             cc_time = round((time.time() - cc_start) * 1e3, 3)
             logger.info(f'Recommendation collection creation time = {cc_time} ms')
@@ -309,7 +309,7 @@ async def train_matrix_factorization(algo: str = 'ALS'):
             # for user_id in user_mapping: 
             #     redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(10)
 
 
 async def calculate_top_recommendations():
