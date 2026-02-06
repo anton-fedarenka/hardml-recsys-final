@@ -214,7 +214,7 @@ def get_recs(user_id: str):
         top_items = tops[0]
         tops.rotate(1)
         item_ids = [item for item in top_items if item not in history]
-        logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
+        # logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
     else:
         # top_items = []
         # logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')

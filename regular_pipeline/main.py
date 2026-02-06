@@ -116,7 +116,7 @@ def _update_bandit(data: pl.DataFrame) -> None:
     # logger.info('calculating top recommendations')
     # top= local_bandit.get_top_indices(k=TOP_K + 20)
     # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-    top_items = _random_top_bunch_serial(top_k = TOP_K + 20)
+    top_items = _random_top_bunch_parallel(top_k = TOP_K + 20)
     redis_connection.json().set('thompson_top', '.', top_items)
     redis_connection.set('top_updated', 1)
     logger.info('--->> Bandit updated. Thompson items updated! <<---')
@@ -187,7 +187,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 5:
+                    if time.time() - t_start > 0.05:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
