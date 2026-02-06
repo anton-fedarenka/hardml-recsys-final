@@ -187,7 +187,7 @@ async def collect_messages():
                     message = json.loads(message)
                     data.append(message)
 
-                    if time.time() - t_start > 0.05:
+                    if time.time() - t_start > 0.1:
                         logger.info('saving events from rabbitmq')
                         # update data if 10s passed
                         new_data = pl.DataFrame(data).explode(['item_ids', 'actions']).rename({
@@ -217,7 +217,6 @@ async def train_matrix_factorization(algo: str = 'ALS'):
             logger.info('Run matrix factorization')
             interact_data = pl.read_csv('./data/interactions.csv')
             user_mapping = {user: i for i, user in enumerate(interact_data['user_id'].unique())}
-            # redis_connection.json().set('user_mapping', '.', user_mapping)
             
             clear = redis_connection.get('clear')
             clear = int(clear) if clear is not None else 1
@@ -310,7 +309,7 @@ async def train_matrix_factorization(algo: str = 'ALS'):
             # for user_id in user_mapping: 
             #     redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
 
 async def calculate_top_recommendations():
@@ -374,7 +373,7 @@ async def main():
     await asyncio.gather(
         collect_messages(),
         # update_top_recomendations(),
-        # train_matrix_factorization(),
+        train_matrix_factorization(),
         # calculate_top_recommendations(),
         # dump_metrics()
     )

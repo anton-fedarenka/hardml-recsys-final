@@ -190,17 +190,18 @@ def get_recs(user_id: str):
     global tops
 
     item_ids = []
-    # user_mapping = redis_connection.json().get('user_mapping')
+    top_items = []
+    personal_items = []
 
-    # history = redis_connection.json().get(f'user_history_{user_id}') or []
     history = rec_history.get(user_id, [])
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
-    # try:
-    #     # personal_items = redis_connection.json().get(f'recs_user_{user_id}')
-    #     top_items = redis_connection.json().get(f'thompson_top')
-    # except redis.exceptions.ConnectionError:
-    #     print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+    if redis_connection.exists(f'recs_user_{user_id}'):
+        try:
+            personal_items = redis_connection.json().get(f'recs_user_{user_id}')
+            logger.info(f'Extracted {len(personal_items)} for user {user_id}')
+        except redis.exceptions.ConnectionError:
+            print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
 
     top_updated = int(redis_connection.get('top_updated'))
     if top_updated:
@@ -213,12 +214,12 @@ def get_recs(user_id: str):
     if len(tops) > 0:
         top_items = tops[0]
         tops.rotate(1)
-        item_ids = [item for item in top_items if item not in history]
-        # logger.info(f' ===== Use T. TOP for recs! Rest of tops is {len(tops)} ===== ' )
-    else:
+    # else:
         # top_items = []
         # logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
-        logger.info(f'Thompson top item is empty for user {user_id}')
+        # logger.info(f'Thompson top item is empty for user {user_id}')
+    
+    item_ids = [item for item in personal_items + top_items if item not in history]
 
     # if personal_items is None: 
     #     personal_items = [] #if personal_items is None else personal_items
