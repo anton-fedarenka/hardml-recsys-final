@@ -211,7 +211,7 @@ async def collect_messages():
                         t_start = time.time()
 
 
-async def train_matrix_factorization(algo: str = 'ALS'):
+async def train_matrix_factorization(algo: str = 'BPR'):
     while True:
         if os.path.exists("./data/interactions.csv"):
             logger.info('Run matrix factorization')
@@ -309,7 +309,7 @@ async def train_matrix_factorization(algo: str = 'ALS'):
             # for user_id in user_mapping: 
             #     redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
 
 async def calculate_top_recommendations():

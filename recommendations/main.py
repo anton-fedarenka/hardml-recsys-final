@@ -201,7 +201,13 @@ def get_recs(user_id: str):
             personal_items = redis_connection.json().get(f'recs_user_{user_id}')
             logger.info(f'Extracted {len(personal_items)} for user {user_id}')
         except redis.exceptions.ConnectionError:
-            print(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+            logger.exception(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+
+        if len(personal_items) >= TOP_K + len(history):
+            item_ids = [item for item in personal_items if item not in history][:TOP_K]
+            history.extend(item_ids)
+            rec_history[user_id] = history
+            return RecommendationsResponse(item_ids=item_ids)
 
     top_updated = int(redis_connection.get('top_updated'))
     if top_updated:
@@ -209,63 +215,13 @@ def get_recs(user_id: str):
             tops = deque(redis_connection.json().get('thompson_top'))
             redis_connection.set('top_updated', 0)
         except redis.exceptions.ConnectionError:
-            print(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
+            logger.exception(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
     
     if len(tops) > 0:
         top_items = tops[0]
         tops.rotate(1)
-    # else:
-        # top_items = []
-        # logger.warning('<<<<<<< !!! TOPS COLLECTION IS EMPTY !!! >>>>>>>>>>')
-        # logger.info(f'Thompson top item is empty for user {user_id}')
     
     item_ids = [item for item in personal_items + top_items if item not in history]
-
-    # if personal_items is None: 
-    #     personal_items = [] #if personal_items is None else personal_items
-    #     logger.info(f'Personal item is empty for user {user_id}')
-    # else:
-    #     logger.info(f'N_pers = {len(personal_items)} pesonal items are retrieved for user {user_id}')
-    
-    # if top_items is None: 
-    #     top_items = [] # if top_items is None else top_items
-    #     logger.info(f'Thompson top item is empty for user {user_id}')
-    # else:
-    #     logger.info(f'N_top = {len(top_items)} top items are retrieved for user {user_id}')
-
-    # item_ids = [item for item in personal_items + top_items if item not in history]
-
-    # if user_mapping and user_id in user_mapping:
-    #     pers_t_start = time.time()
-    #     logger.info(f"Retriving personal recommentdations for user {user_id}")
-    #     try: 
-    #         # item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
-    #         item_ids = redis_connection.json().get(f'recs_user_{user_id}')
-    #         logger.info(f'Retrieved {len(item_ids)} personal recommendations for user {user_id}')
-    #     except Exception as e:
-    #         logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
-    #         item_ids = []            
-    #     pers_response_td.append(time.time() - pers_t_start)
-
-    # if len(item_ids) < TOP_K:
-    #     logger.info(f"Getting thompson top for user {user_id}")
-    #     top_t_start = time.time()
-    #     try:
-    #         top_items = redis_connection.json().get('thompson_top')
-    #     except redis.exceptions.ConnectionError:
-    #         print(f'Exception while Redis connecting: Conncection fail while retrieve thompson top recommendations for user {user_id}')
-    #     if top_items is not None:
-    #         item_ids.extend(top_items)
-        
-    #     if len(history) > 0: 
-    #         item_ids = [item for item in item_ids if item not in history]
-    #     # try:
-    #     #     top_indeces = _get_thompson_top(TOP_K + len(history))
-    #     #     top_items = [movie_inv_mapping[item] for item in top_indeces if item not in history]
-    #     #     item_ids.extend(top_items)
-    #     # except Exception as e: 
-    #     #     logger.exception(f'Fail to get thompson top for user {user_id}. Exception: {e}')
-    #     top_response_td.append(time.time() - top_t_start)
         
     if len(item_ids) < TOP_K: # or random.random() < EPSILON:
         logger.warning(f"Fail to get enough precalculated recommendations for user {user_id}; number of the items retrieved: {len(item_ids)}! Random choice...")
@@ -276,19 +232,6 @@ def get_recs(user_id: str):
     item_ids = item_ids[:TOP_K]
     history.extend(item_ids)
     rec_history[user_id] = history
-
-    # try:
-    #     df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
-    # except Exception: 
-    #     logger.exception("Exception while df_rec_history dataframe updating")
-
-    # print(f'df_rec_history = {df_rec_history}')
-    # print(f'df_hist_diversity = {df_hist_diversity}')
-    # os.makedirs('./data/history', exist_ok=True)
-    # suffix = time.strftime("%H_%M_%S", time.localtime())
-    # df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
-    
-    # response_td.append(time.time() - t_response_start)
 
     return RecommendationsResponse(item_ids=item_ids)
 
