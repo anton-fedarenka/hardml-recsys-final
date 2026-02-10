@@ -47,7 +47,7 @@ address accessible on the network. This requirement determined the scheme of dep
 of the project. To run the project:
 
 1. Install Docker and Docker Compose; 
-2. Execute docker compose up --build
+2. Execute ``docker compose up --build``
 
 ## Description of versions
 
@@ -57,7 +57,8 @@ recommendation service for regular logging of performace metrics in MLflow.
 recommendation service: working, but very slow.
 3. v2.0 — Working and very well performed version based on multi-armed bandit
 algorithm only.
-4. v3.0 — The best and final version using both the multi-armed bandit along with matrix factorization algorithm.
+4. v3.0 — The best and final version using both the multi-armed bandit 
+along with matrix factorization algorithm.
 
 
 
