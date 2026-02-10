@@ -58,7 +58,8 @@ recommendation service: working, but very slow.
 3. v2.0 — Working and very well performed version based on multi-armed bandit
 algorithm only.
 4. v3.0 — The best and final version using both the multi-armed bandit 
-along with matrix factorization algorithm.
+along with matrix factorization algorithm.\
+    v3.0.1 — Using library versions are pinned. 
 
 
 
