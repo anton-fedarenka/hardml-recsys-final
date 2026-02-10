@@ -43,7 +43,7 @@ logger.add('/logs/regular_pipeline.log',enqueue=True, backtrace=False, colorize=
 #     raise TypeError("Error durring movie ids extraction: movie ids mapping is absent in redis database!")
 
 
-sys.tracebacklimit = 4
+sys.tracebacklimit = 4  # Logging system setting
 
 movie_mapping = None
 movie_inv_mapping = None
@@ -53,15 +53,21 @@ with open('data/run_params.json', 'r') as f:
     params = json.load(f)
 
 TOP_K = params['TOP_K']
-N_recs = params['N_recs']
-calc_diversity_flag = params['calc_diversity_flag']
-divers_coeff = params['divers_coeff']
-bandit_params = params['bandit_params']
-top_bunch_num = params['top_bunch_num']
+N_recs = params['N_recs']                           # Number of items extracted
+calc_diversity_flag = params['calc_diversity_flag'] # Calculate diversity between elements or not
+divers_coeff = params['divers_coeff']               # Coefficient of the diversity scalling when adding to the final score
+bandit_params = params['bandit_params']             # Number of different samples from current bandit state
+top_bunch_num = params['top_bunch_num']             # Algorithm used for matrix factorization (ALS or BPR)
+factorization_algo  = params['factorization_algo']  # Delay time between iterantions of matrix factrization model training
+dt = params['dt']                                   # Delay time between iterantions of matrix factrization model training
 
 
 @logger.catch
 def _update_data() -> bool:
+    '''
+    To reset the movie list and bandit state.
+    Used if the cleanup service is triggered. 
+    '''
     global local_bandit
     global movie_mapping
     global movie_inv_mapping
@@ -87,6 +93,11 @@ def _update_data() -> bool:
 
 @logger.catch
 def _update_bandit(data: pl.DataFrame) -> None: 
+    '''
+    To update Thompson sampling bandit state accoding user interaction data and
+    calculate bunch of top recommendations based on current bundit state. 
+    The actual top items are stored in the Redis database. 
+    '''
     global local_bandit
     global movie_mapping
     global movie_inv_mapping
@@ -111,11 +122,6 @@ def _update_bandit(data: pl.DataFrame) -> None:
     for item_id, action, num in data_likes.rows():
         local_bandit.retrieve_reward(arm_ind=movie_mapping[item_id], action=action, n=num)
     
-    # logger.info('--- Bandit updated! ---')
-
-    # logger.info('calculating top recommendations')
-    # top= local_bandit.get_top_indices(k=TOP_K + 20)
-    # top_item_ids = [movie_inv_mapping[i] for i in top_inds]
     top_items = _random_top_bunch_parallel(top_k = TOP_K + 20)
     redis_connection.json().set('thompson_top', '.', top_items)
     redis_connection.set('top_updated', 1)
@@ -126,6 +132,9 @@ def _update_bandit(data: pl.DataFrame) -> None:
 
 @logger.catch
 def _random_top_bunch_parallel(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
+    '''
+    To extract bunch of top items from the current bandit state. 
+    '''
     top_inds = local_bandit.get_top_indices(top_k=top_k, n_bunch=n_bunch)
     tops = [[movie_inv_mapping[i] for i in sub] for sub in top_inds]
     # tops = np.vectorize(movie_inv_mapping.get)(top_inds).tolist()
@@ -133,6 +142,9 @@ def _random_top_bunch_parallel(top_k: int = TOP_K, n_bunch: int = top_bunch_num)
 
 @logger.catch
 def _random_top_bunch_serial(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
+    '''
+    To extract bunch of top items from the current bandit state. 
+    '''
     tops = []
     for _ in range(n_bunch):
         top_inds = local_bandit.get_top_indices(top_k=top_k, n_bunch=1)
@@ -142,10 +154,14 @@ def _random_top_bunch_serial(top_k: int = TOP_K, n_bunch: int = top_bunch_num):
 
 
 async def update_top_recomendations():
+    """
+    Deprecated.
+    The legacy function for updating the current state of the top items according to the Thompson sampling algorithm.
+    Not used in the final version. 
+    """
     while True:
         if local_bandit is not None:
-            top_items = _random_top_bunch(top_k=TOP_K + 20)
-            # redis_connection.json().set('thompson_top', '.', top_items)
+            top_items = _random_top_bunch_parallel(top_k=TOP_K + 20, n_bunch=n_bunch)
             redis_connection.json().set('thompson_top','.', top_items)
             redis_connection.set('top_updated', 1)
             logger.info('---> Top items updated <---')
@@ -212,6 +228,10 @@ async def collect_messages():
 
 
 async def train_matrix_factorization(algo: str = 'BPR'):
+    """
+    Running martix factorizatoin algorithm of available data. 
+    Also the diversity between recommended elements can be calculate and applied to the final result. 
+    """
     while True:
         if os.path.exists("./data/interactions.csv"):
             logger.info('Run matrix factorization')
@@ -230,11 +250,10 @@ async def train_matrix_factorization(algo: str = 'BPR'):
                     await asyncio.sleep(sleep_dt)
                     continue
             
+            # Preaparing data for training
             df = (
                 interact_data
                 .sort(by='timestamp', descending=True)
-                # !!!!!!!! Remove in prod!!!!!!
-                # .unique(subset = ['user_id','item_id'], keep='first') 
                 .with_columns([
                     pl.col('action').replace({'like': 1, 'dislike': -1}).cast(int).alias('value'),
                     pl.col('user_id').replace(user_mapping).cast(int).alias('user_index'),
@@ -247,8 +266,8 @@ async def train_matrix_factorization(algo: str = 'BPR'):
                 ])
             )
 
+            # Sparse matrix collection
             rows, cols, values = [], [], []
-
             for user_index, movie_indexes, likes in df.rows():
                 rows.extend([user_index] * len(movie_indexes))
                 cols.extend(movie_indexes)
@@ -283,6 +302,7 @@ async def train_matrix_factorization(algo: str = 'BPR'):
             rec_time = round((time.time() - rec_start) * 1e3, 3)
             logger.info(f'Recommendation time = {rec_time} ms')
             
+            # Calcucalating and applying diversity to the extracted items:
             if calc_diversity_flag:
                 div_start = time.time()
                 emb_size = movie_embs.shape[1]
@@ -309,56 +329,16 @@ async def train_matrix_factorization(algo: str = 'BPR'):
             # for user_id in user_mapping: 
             #     redis_connection.json().set(f'user_emb_{user_id}', '.', user_embs[user_mapping[user_id]].tolist())
 
-        await asyncio.sleep(30)
-
-
-async def calculate_top_recommendations():
-    global local_bandit
-    global movie_mapping
-    global movie_inv_mapping
-
-    while True:
-        clear = redis_connection.get('clear')
-        clear = int(clear) if clear is not None else 1
-        if clear:
-            # Updating thompson sampling bandit if clean process is triggered
-            if _update_data(): 
-                redis_connection.set('clear',0)
-            else:
-                await asyncio.sleep(5)
-                continue
-            
-            if os.path.exists('./data/interactions.csv'):
-                interactions = pl.read_csv('./data/interactions.csv')
-                _update_bandit(local_bandit, interactions)
-
-        # bandit = ThompsonSamplingBandit(len(movie_ids_list), alpha_weight=1, beta_weight=5)
-#             top_items = (
-#                 interactions
-#                 .sort('timestamp')
-#                 .unique(['user_id', 'item_id', 'action'], keep='last')
-#                 .filter(pl.col('action') == 'like')
-#                 .group_by('item_id')
-#                 .len()
-#                 .sort('len', descending=True)
-#                 .head(100)
-#             )['item_id'].to_list()
-# 
-#             top_items = [str(item_id) for item_id in top_items]
-# 
-#             redis_connection.json().set('top_items', '.', top_items)
-        logger.info('calculating top recommendations')
-        top_inds = local_bandit.get_top_indices(k=10)
-        top_item_ids = [movie_inv_mapping[i] for i in top_inds]
-        redis_connection.json().set('thompson_top', '.', top_item_ids)
-
-        # Save bandit state to use it in recommendation service: 
-        redis_connection.json().set('bandit_state', '.', asdict(local_bandit))
-
-        await asyncio.sleep(5)
+        await asyncio.sleep(dt)
 
 
 async def dump_metrics():
+    '''
+    Deprecated.
+    The online metrics monitoring function using MLflow. 
+    It significantly slows down the recommendation process and disrupting the verification pipeline.
+    since it is not used in the final version. 
+    '''
     while True: 
         logger.info('dump metrics')
         try:
@@ -372,9 +352,8 @@ async def dump_metrics():
 async def main():
     await asyncio.gather(
         collect_messages(),
+        train_matrix_factorization(algo=factorization_algo),
         # update_top_recomendations(),
-        train_matrix_factorization(),
-        # calculate_top_recommendations(),
         # dump_metrics()
     )
 
