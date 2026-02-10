@@ -9,7 +9,7 @@ successfully completed with the highest possible grade
 
 The project is a service of movie and TV series recommendations based on user reactions 
 (likes/dislikes). To provide relevant recommendations to so called "cold" users, i.e. users 
-without available interaction history, the reinforcement learning algorithm was implemented ---
+without available interaction history, the reinforcement learning algorithm was implemented —
 a multi-armed bandit algorithm implementing Thompson sampling scenario. 
 It turned out that even this approach alone is capable of overcoming the upper limits 
 of targer metrics and obtaining the maximum score.
@@ -19,7 +19,7 @@ matrix factorization algorithms were also applied. The ALS and BPR algorithms we
 ## Project Structure
 The recommender system consists of three main components:
 
-* **Recommendations Service** --- a backend service responsible for recommendations to end users, with the following endpoints:
+* **Recommendations Service** — a backend service responsible for recommendations to end users, with the following endpoints:
 
     * /healthcheck returns the service status. The grader requires a 200 (OK) response code.
 
@@ -29,16 +29,16 @@ The recommender system consists of three main components:
 
     * /recs/{user_id} returns a list of recommendations as a list of objects for the user specified by user_id.
 
-* **Event Collector** --- a service for collecting and processing user reactions (likes/dislikes),
+* **Event Collector** — a service for collecting and processing user reactions (likes/dislikes),
  which processes the /interact endpoint. It stores received events in RabbitMQ message broker for
  further processing in the Regular pipeline service.
 
-* **Regular pipeline** --- a task scheduler. Asynchronously processes data with interaction events
+* **Regular pipeline** — a task scheduler. Asynchronously processes data with interaction events
 and trains recommendation algorithms based on it. The final version uses two main recommendation
 algorithms: a multi-armed bandit implementing the Thompson sampling scenario and a martix
 factorization algorithm. 
 
-* **Webapp** --- a frontend service used for debugging and testing the recommendation system. 
+* **Webapp** — a frontend service used for debugging and testing the recommendation system. 
 
 ## Project launch
 
@@ -48,6 +48,16 @@ of the project. To run the project:
 
 1. Install Docker and Docker Compose; 
 2. Execute docker compose up --build
+
+## Description of versions
+
+1. v0.0 — The first working version with an additional endpoint in the
+recommendation service for regular logging of performace metrics in MLflow. 
+2. v1.0 — The latest version uses qdrant and calculations within the
+recommendation service: working, but very slow.
+3. v2.0 — Working and very well performed version based on multi-armed bandit
+algorithm only.
+4. v3.0 — The best and final version using both the multi-armed bandit along with matrix factorization algorithm.
 
 
 
