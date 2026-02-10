@@ -6,6 +6,7 @@ __MACOSX/
 *.ipynb_checkpoints/
 */static
 data/
+logs/
 train_data/
 *.ipynb
 requirements_old.txt
@@ -13,3 +14,4 @@ requirements_old.txt
 *.log
 mlflow*
 *mlruns
+watched_filter.py
