@@ -1,0 +1,15 @@
+data/
+train_data/
+logs/
+.git/
+.gitignore
+*.ipynb
+*ipynb*
+watched_filter.py
+mlflow
+mlflow-data
+mlflow*
+mlruns
+.venv
+.vscode
+*/__pycache__

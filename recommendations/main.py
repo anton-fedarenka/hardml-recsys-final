@@ -5,6 +5,7 @@ import sys
 import time
 import json
 from dataclasses import asdict
+from collections import deque
 
 import numpy as np
 import polars as pl
@@ -13,7 +14,7 @@ from fastapi import FastAPI
 from qdrant_client import QdrantClient
 from sklearn.preprocessing import normalize
 from loguru import logger
-import mlflow
+# import mlflow
 
 from models import InteractEvent, RecommendationsResponse, NewItemsEvent
 from bandit import ThompsonSamplingBandit, create_bandit_instance
@@ -23,8 +24,8 @@ app = FastAPI()
 
 # --------- Docker settings: ----------------
 redis_connection = redis.Redis('redis')
-qdrant_connection = QdrantClient("qdrant", port=6333)
-mlflow.set_tracking_uri("http://mlflow-server:8080")
+# qdrant_connection = QdrantClient("qdrant", port=6333)
+# mlflow.set_tracking_uri("http://mlflow-server:8080")
 logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=False)
 # -------------------------------------------
 
@@ -33,6 +34,7 @@ logger.add('/logs/recommendations.log',enqueue=True, backtrace=False, colorize=F
 # qdrant_connection = QdrantClient("localhost", port=6333)
 # logger.add('./logs/recommendations.log',enqueue=True, backtrace=False, colorize=True)
 # -------------------------------------------
+sys.tracebacklimit = 4  # Logging system setting
 
 unique_item_ids = set()
 movie_mapping = {}
@@ -46,25 +48,45 @@ response_td = []
 pers_response_td = []
 top_response_td = []
 
-EPSILON = 0.05
-TOP_K = 10
-diversity_coeff = 0.4
+tops = []
 
+TOP_K = 10
+N_recs = TOP_K + 20         # Number of items extracted; + 20 since it is the largest history in verification system. 
+calc_diversity_flag = False # Calculate diversity between elements or not. If yes, increase N_recs to 5*TOP_K minimum!
+divers_coeff = 0.1          # Coefficient of the diversity scalling when adding to the final score
 bandit_params  = {
     'alpha_weight': 1,
-    'beta_weight': 4 
-}
-redis_connection.json().set('bandit_params','.',bandit_params)
+    'beta_weight': 1000 
+}                           # Thompson sampling bandit parameters
+top_bunch_num = 100         # Number of different samples from current bandit state
+factorization_algo = 'BPR'  # Algorithm used for matrix factorization (ALS or BPR)
+dt = 60                     # Delay time between iterantions of matrix factrization model training
 
-phase = 0
+run_params = {
+    'TOP_K': TOP_K,
+    'N_recs': N_recs,
+    'calc_diversity_flag': calc_diversity_flag,
+    'divers_coeff': divers_coeff,
+    'bandit_params': bandit_params,
+    'top_bunch_num': top_bunch_num,
+    'factorization_algo': factorization_algo,
+    'dt': dt 
+}
+with open('data/run_params.json', 'w') as f: 
+    json.dump(run_params, f)
+
+# Parameters for logging of the verification process hisrory:
+phase = 0  
 batch = 0
 
-sys.tracebacklimit = 4
+# Logging initial parameters in MLflow:
 # mlflow_experiment_id = mlflow.create_experiment('experiment_1')
-with mlflow.start_run() as run:
-    mlflow_run_id = run.info.run_id
-    mlflow.log_params(bandit_params)
-    # redis_connection.json().set('mlflow_run_id','.',mlflow_run_id)
+# with mlflow.start_run() as run:
+#     mlflow_run_id = run.info.run_id
+#     mlflow.log_params(bandit_params)
+#     mlflow.log_param('N_recs', N_recs)
+#     mlflow.log_param('calc_diversity_flag', calc_diversity_flag)
+#     mlflow.log_param('divers_coeff', divers_coeff)
 
 
 @app.get('/healthcheck')
@@ -75,6 +97,9 @@ def healthcheck():
 
 @app.get('/cleanup')
 def cleanup():
+    '''
+    To clean all data and states in the beginning of new iteration of verification process.
+    '''
     global unique_item_ids
     global df_rec_history
     global df_hist_diversity
@@ -86,8 +111,8 @@ def cleanup():
 
     logger.warning("Cleaning procedure has been called!..")
 
-    if phase > 0:
-        calc_metrics()
+    # if phase > 0:
+    #     calc_metrics()
     
     phase += 1
     batch = 0
@@ -97,29 +122,22 @@ def cleanup():
     movie_mapping = {}
     movie_inv_mapping = {}
     try:
-        # redis_connection.delete('*')
-        # redis_connection.json().delete('*')
-        # redis_connection.flushall()
-        # redis_connection.json().delete('thompson_top')
-        # redis_connection.json().delete('movie_ids_mapping')
-        # redis_connection.json().delete('bandit_state')
-        # redis_connection.json().delete('user_mapping')
         redis_connection.flushdb() # Delete all keys from redis
-        # redis_connection.json().set('clear','.', True)
+        redis_connection.set('clear', 1)
     except redis.exceptions.ConnectionError:
         logger.exception("Redis connection failure while cleaning.")
 
-    try:
-        qdrant_connection.delete_collection(collection_name="movie_embs")
-    except Exception as e: 
-        logger.exception(f'Exception occurs when qdrant collection deleting: {e}')
+    # Removing collection in qdrant database if used:
+    # try:
+    #     qdrant_connection.delete_collection(collection_name="movie_embs")
+    # except Exception as e: 
+    #     logger.exception(f'Exception occurs when qdrant collection deleting: {e}')
 
+    # Removing and saving the recommendation history from previous verification iteration for further analysis: 
     try: 
         if df_rec_history is not None: 
             # Saving dataframes to csv files:
             os.makedirs('./data/history', exist_ok=True)
-            #suffix = time.strftime("%H_%M_%S", time.localtime())
-            # logger.warning(f'!!!>>> df_rec_history = {df_rec_history}')
             df_rec_history.write_csv(f'./data/history/recommendations_ph_{phase}.csv')
             if df_hist_diversity is not None: 
                 df_hist_diversity.write_csv(f'./data/history/diversity_ph_{phase}.csv')
@@ -127,17 +145,20 @@ def cleanup():
             df_hist_diversity = None
     except Exception as e: 
         logger.exception(f'Exception occurs while history dataframes saving: {e}')
-        
+
+    # Removing and saving the interaction history from previous verification iteratin for further analysis: 
     if os.path.exists('./data/interactions.csv'):
-        #suffix = time.strftime("%H_%M_%S", time.localtime())
         os.rename('./data/interactions.csv', f'./data/interactions_ph_{phase}.csv')
 
-    logger.warning('>>> Cleaned up! <<<')
+    logger.warning('>>> !Cleaned UP! <<<')
     return 200
 
 
 @app.post('/add_items')
 def add_movie(request: NewItemsEvent):
+    '''
+    To update the recommendation system by new movie items in the new verification cycle. 
+    '''
     global unique_item_ids
     global movie_mapping
     global movie_inv_mapping
@@ -145,14 +166,6 @@ def add_movie(request: NewItemsEvent):
 
     logger.warning("Add new data")
 
-    # Treat request as dataframe and drop duplicates items. 
-    # This part did not test
-    # df = pd.DataFrame(request.model_dump())
-    # df.drop_duplicates(inplace=True)
-
-    # Write down the added items to the file for further testing
-    # suffix = time.strftime("%H_%M_%S", time.localtime())
-    # suffix = round(time.time() * 1e6)
     batch += 1
     if phase > 0: 
         filepath = f'./data/added_items/items_ph_{phase}_bt_{batch}.json'
@@ -168,7 +181,7 @@ def add_movie(request: NewItemsEvent):
         {n + i: movie_id for i, movie_id in enumerate(request.item_ids)}
         )
     redis_connection.json().set('movie_mapping','.',movie_mapping)
-    redis_connection.json().set('movie_inv_mapping','.',movie_inv_mapping)
+    redis_connection.set('top_updated', 0)
 
     for item_id in request.item_ids:
         unique_item_ids.add(item_id)
@@ -185,73 +198,65 @@ def get_recs(user_id: str):
     global response_td
     global top_response_td
     global pers_response_td
+    global tops
 
     item_ids = []
-    user_mapping = redis_connection.json().get('user_mapping')
-    t_response_start = time.time()
+    top_items = []
+    personal_items = []
 
-    # history = redis_connection.json().get(f'user_history_{user_id}') or []
-    history = rec_history.get(user_id, [])
+    history = rec_history.get(user_id, []) # Getting user history
     logger.info(f'-- Looks recommendations for user {user_id} with history length {len(history)} --')
 
-    # if user_mapping and user_id in user_mapping:
-    #     pers_t_start = time.time()
-    #     logger.info(f"Retriving personal recommentdations for user {user_id}")
-    #     try: 
-    #         item_ids = _get_personal_recs(user_id=user_id, user_history= history, k = 5*TOP_K, min_score=0)
-    #     except Exception as e:
-    #         logger.exception(f'Fail to retrieve personal recommendations for user {user_id}. Exception: {e}')
-    #         item_ids = []            
-    #     pers_response_td.append(time.time() - pers_t_start)
-
-    if len(item_ids) < TOP_K:
-        logger.info(f"Getting thompson top for user {user_id}")
-        # try:
-        #     top_items = redis_connection.json().get('thompson_top')
-        #     item_ids.extend(top_items)
-        # except redis.exceptions.ConnectionError:
-        #     print(f'Exception while Redis connecting: Conncection fail while retrieve thompson top recommendations for user {user_id}')
-        # if len(history) > 0: 
-        #     item_ids = [item for item in item_ids if item not in history]
-        top_t_start = time.time()
+    # Extracting personal recommendation if available: 
+    if redis_connection.exists(f'recs_user_{user_id}'):
         try:
-            top_indeces = _get_thompson_top(TOP_K + len(history))
-            top_items = [movie_inv_mapping[item] for item in top_indeces if item not in history]
-            item_ids.extend(top_items)
-        except Exception as e: 
-            logger.exception(f'Fail to get thompson top for user {user_id}. Exception: {e}')
-        top_response_td.append(time.time() - top_t_start)
+            personal_items = redis_connection.json().get(f'recs_user_{user_id}')
+            logger.info(f'Extracted {len(personal_items)} for user {user_id}')
+        except redis.exceptions.ConnectionError:
+            logger.exception(f'Exception while Redis connecting: Conncection fail while retrieving recommendations for user {user_id}')
+
+        if len(personal_items) >= TOP_K + len(history):
+            item_ids = [item for item in personal_items if item not in history][:TOP_K]
+            history.extend(item_ids)
+            rec_history[user_id] = history
+            return RecommendationsResponse(item_ids=item_ids)
+
+    # To select the top best options in accordance with the Thompson selection method, if personal recommendations are absent or insufficient.
+    top_updated = int(redis_connection.get('top_updated'))
+    if top_updated:
+        try:
+            tops = deque(redis_connection.json().get('thompson_top'))
+            redis_connection.set('top_updated', 0)
+        except redis.exceptions.ConnectionError:
+            logger.exception(f'Exception while Redis connecting: Conncection fail while getting top recs for user {user_id}')
+    
+    if len(tops) > 0:
+        top_items = tops[0]
+        tops.rotate(1)
+    
+    item_ids = [item for item in personal_items + top_items if item not in history]
         
-    if len(item_ids) < TOP_K: # or random.random() < EPSILON:
-        logger.warning(f"Fail to get any precalculated recommendations for user {user_id}! Random choice...")
-        item_ids += [
-            item for item in 
-            np.random.choice(list(unique_item_ids), size=20, replace=False).tolist()
-            if item not in history
-        ]
+    # Random choice if neither personal nor top recommendation are available or insufficient.
+    if len(item_ids) < TOP_K: 
+        logger.warning(f"Fail to get enough precalculated recommendations for user {user_id}; number of the items retrieved: {len(item_ids)}! Random choice...")
+        rng = np.random.default_rng()
+        random_recs = rng.choice(list(unique_item_ids), size=TOP_K + len(history), replace=False).tolist()
+        item_ids += [item for item in random_recs if item not in history]
 
     item_ids = item_ids[:TOP_K]
     history.extend(item_ids)
-    rec_history[user_id] = history
-
-    try:
-        df_rec_history = _update_history_df(user_id=user_id, recs=item_ids, time_mark=time.time(), df_hist=df_rec_history)
-    except Exception: 
-        logger.exception("Exception while df_rec_history dataframe updating")
-
-    # print(f'df_rec_history = {df_rec_history}')
-    # print(f'df_hist_diversity = {df_hist_diversity}')
-    # os.makedirs('./data/history', exist_ok=True)
-    # suffix = time.strftime("%H_%M_%S", time.localtime())
-    # df_rec_history.write_csv(f'./data/history/recommendations_{suffix}.csv')
-    
-    response_td.append(time.time() - t_response_start)
+    rec_history[user_id] = history # Updating user history 
 
     return RecommendationsResponse(item_ids=item_ids)
 
 
 @logger.catch
 def _get_thompson_top(k: int) -> List[int]:  
+    '''
+    Deprecated function to get the top items according to Thompson sampling procedure.
+    If present, the multi-armed bandit state stored in the Redis database is used.
+    It became irrelevant after all computing functionality was transferred to regular_pipeline.
+    '''
     try: 
         bandit_state = redis_connection.json().get('bandit_state')
         if type(bandit_state) == str:
@@ -270,6 +275,14 @@ def _get_thompson_top(k: int) -> List[int]:
 
 @logger.catch
 def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, min_score: float = -float("inf")): 
+    '''
+    Deprecated function for extraction personalized recommendation based on item embedings obtained using matrix factorization algorithm.
+    Uses the Qdrant for closest points searching.
+    Adjustments for intra-group diversity of elements in a recommendation and for the unexpectedness 
+    of recommended elements relative to the previous recommendation history are also calculated and applied.
+    It became irrelevant after all computing functionality was transferred to regular_pipeline.
+    '''
+
     global df_hist_diversity
     user_emb = redis_connection.json().get(f'user_emb_{user_id}')
     try:
@@ -294,7 +307,6 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
     unexpect = np.zeros(rec_scores.size)
 
     # If retrieved number of recs is enough, can apply for the diversity correction: 
-    # if len(rec_indices) > TOP_K:
     # logger.info(f'Diversity calculation')
     rec_vecs = []
     hist_vecs = []
@@ -336,11 +348,11 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
         # hist_vecs = (hist_vecs.T/np.linalg.norm(hist_vecs, axis=1)).T
         hist_vecs = normalize(hist_vecs, axis=1)
         unexpect =  unexpectedness(rec_vecs, hist_vecs)
-        rec_scores *= unexpect # unexpectedness(rec_vecs, hist_vecs)
+        rec_scores *= unexpect 
 
     top_args = rec_scores.argsort()[-TOP_K:][::-1]
     
-    total_rec_divers = 2 * divers[top_args].mean() # There are doubts about this formula
+    total_rec_divers = 2 * divers[top_args].mean() 
     total_rec_unexpect = unexpect[top_args].mean() 
 
     df = pl.DataFrame({
@@ -359,15 +371,21 @@ def _get_personal_recs(user_id: str, user_history: List[int], k: int = TOP_K, mi
     
 def unexpectedness(recs: np.ndarray, hist: np.ndarray):
     '''
-    Calculate so called Unexpectedness: the distance between recommendation and history of user
+    Deprecated.
+    The legacy function to calculate so called Unexpectedness: the distance between recommendation and history of the user.
+    Not used in the final version due to its redundancy in solving current problem and 
+    transferring all computing functionality into regular_pipeline module.
     '''
     sims = recs @ hist.T 
-    return  (1 - sims).sum(axis=1)/sims.shape[1] # !!! В нормировочном знаменателе есть сомнения!
+    return  (1 - sims).sum(axis=1)/sims.shape[1] 
 
 
 def inner_diversity(vectors: np.ndarray):
     '''
-    Calculate the diversity between the objects in recommedation
+    Deprecated.
+    The legacy function to calculate the diversity between the objects in personal recommendations.  
+    Not used in the final version due to its redundancy in solving current problem and 
+    transferring all computing functionality into regular_pipeline module.
     '''
     sims = vectors @ vectors.T
     return (1 - sims).sum(axis=1)/sims.shape[1]
@@ -375,6 +393,9 @@ def inner_diversity(vectors: np.ndarray):
 
 @logger.catch
 def _update_history_df(user_id, recs, time_mark, df_hist = None): 
+    '''
+    To collect history of recommendation for further analysis.
+    '''
     new_data = pl.DataFrame(
         {
             'user': user_id, 
@@ -389,17 +410,24 @@ def _update_history_df(user_id, recs, time_mark, df_hist = None):
     return df
 
 def precision(recs: List[Any], likes: List[Any]):
+    '''
+    Deprecated.
+    To Calculate the precision of recommendaitons based on interactions. 
+    '''
     if len(likes) == 0:
         return 0
     if len(recs) == 0:
-        # logger.warning("Exception while precision calculation: list of recommendations is empty!")
         return None
-    return len(set(recs).intersection(set(likes)))/len(recs) # len(y_rec[:k])
+    return len(set(recs).intersection(set(likes)))/len(recs) 
 
 
 # @app.get('/calc_metrics')
 @logger.catch
 def calc_metrics(): 
+    '''
+    Deprecated.
+    To calculate available metrics of recommendation system perfomance and logging it in MLflow. 
+    '''
     logger.info('.... Calculation of metrics.... ')
     # t_start = time.time()
     if not os.path.exists('./data/interactions.csv'):
@@ -440,8 +468,8 @@ def calc_metrics():
         logger.warning(f'Unable to log metrics in mlflow: {metrics}')
         return # 200
 
-    with mlflow.start_run(run_id=mlflow_run_id) as run:
-        mlflow.log_metrics(metrics)
-        # mlflow.log_metric('calc_metric_time', time.time() - t_start)
+    # with mlflow.start_run(run_id=mlflow_run_id) as run:
+    #     mlflow.log_metrics(metrics)
+    #     # mlflow.log_metric('calc_metric_time', time.time() - t_start)
 
     return # 200

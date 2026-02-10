@@ -1,10 +1,10 @@
 FROM python:3.12-bookworm
 
-RUN mkdir /recommendations
-RUN mkdir /data
-
 COPY recommendations/requirements.txt .
 RUN pip install -r requirements.txt
+
+RUN mkdir /recommendations
+RUN mkdir /data
 
 COPY ./models.py .
 COPY ./bandit.py .

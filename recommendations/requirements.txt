@@ -7,4 +7,3 @@ pydantic
 scikit-learn
 qdrant_client
 loguru
-mlflow
